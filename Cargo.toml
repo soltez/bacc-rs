@@ -1,0 +1,24 @@
+[package]
+name = "bacc-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A fast and memory efficient Baccarat engine for calculating results, scoreboards, and related statistics."
+license = "LGPL-2.1"
+
+[lib]
+name = "bacc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bacc-rs"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
