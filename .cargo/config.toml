@@ -1,0 +1,10 @@
+[build]
+# Uncomment to use a faster linker on macOS
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[alias]
+c = "check"
+t = "test"
+b = "build"
+r = "run"
+cl = "clippy -- -D warnings"
