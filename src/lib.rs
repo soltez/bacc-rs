@@ -1,3 +1,7 @@
+//! Baccarat engine library.
+
+/// Adds two integers together and returns the result.
+#[must_use]
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

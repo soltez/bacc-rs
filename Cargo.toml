@@ -3,15 +3,13 @@ name = "bacc-rs"
 version = "0.1.0"
 edition = "2024"
 description = "A fast and memory efficient Baccarat engine for calculating results, scoreboards, and related statistics."
-license = "LGPL-3.0"
+license = "LGPL-3.0-only"
+repository = "https://github.com/soltez/bacc-rs"
+keywords = ["baccarat", "casino"]
+categories = ["games"]
 
 [lib]
 name = "bacc"
-path = "src/lib.rs"
-
-[[bin]]
-name = "bacc-rs"
-path = "src/main.rs"
 
 [dependencies]
 
@@ -22,3 +20,10 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
