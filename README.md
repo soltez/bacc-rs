@@ -44,7 +44,7 @@ All five scoreboards are stored as `BigUint` shift-registers:
 
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
-# vvvv = winning hand value 0~9 (V is natural flag)
+# vvvv = winning hand value (0~9)
 ```
 - **Big road** - variable-width column shift-register, newest column at
   the low end.
@@ -58,7 +58,7 @@ All five scoreboards are stored as `BigUint` shift-registers:
 # rrrrrrr = row count (0~127)
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
-# vvvv = winning hand value
+# vvvv = winning hand value (0~9)
 # ttttttt = tie count (0~127)
 ```
 
