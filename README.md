@@ -37,10 +37,10 @@ All five scoreboards are stored as `BigUint` shift-registers:
 
 - **Bead plate** - one byte per round, newest at bits 0-7.
 ```
-...+--------+--------+--------+--------+
-...|vvvvppww|vvvvppww|vvvvppww|vvvvppww|
-...+--------+--------+--------+--------+
-   |<-col1->|<-col2->|  ...   |<-coln->|
++--------+--------+--------+--------+
+|vvvvppww|vvvvppww|vvvvppww|vvvvppww|
++--------+--------+--------+--------+
+|<-col1->|<-col2->|  ...   |<-coln->|
 
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
@@ -65,18 +65,14 @@ All five scoreboards are stored as `BigUint` shift-registers:
 - **Derived roads** - Big Eye Boy, Small Road, and Cockroach Pig, each
   as a run-length-encoded shift-register.
 ```
-...+--------+--------+--------+--------+--------+
-...|rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|
-...+--------+--------+--------+--------+--------+
-   |<-col1->|<-col2->|<-col3->|   ...  |<-coln->|
++--------+--------+--------+--------+--------+
+|rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|
++--------+--------+--------+--------+--------+
+|<-col1->|<-col2->|<-col3->|   ...  |<-coln->|
 
 # p = prediction (0 = chaos, 1 = trend)
 # rrrrrrr = row count (0~127)
 ```
-
-Free functions for writing each scoreboard to any `std::io::Write` sink:
-`write_outcome`, `write_bead_plate`, `write_big_road`,
-`write_derived_roads`.
 
 ## Usage
 
@@ -94,6 +90,10 @@ for round in shoe {
     write_derived_roads(sb.derived_roads(), &mut std::io::stdout()).unwrap();
 }
 ```
+
+Free functions for writing each scoreboard to any `std::io::Write` sink:
+`write_outcome`, `write_bead_plate`, `write_big_road`,
+`write_derived_roads`.
 
 ## License
 
