@@ -32,15 +32,8 @@
 //! # Usage
 //!
 //! ```rust
-//! use bacc::{
-//!     BaccaratScoreboard,
-//!     BaccaratShoe,
-//!     write_outcome,
-//!     write_bead_plate,
-//!     write_big_road,
-//!     write_derived_roads
-//! };
-//! use kev::CardInt;
+//! use bacc::{BaccaratScoreboard, BaccaratShoe};
+//! use bacc::{write_outcome, write_bead_plate, write_big_road, write_derived_roads};
 //! use num_bigint::BigUint;
 //!
 //! let mut sb = BaccaratScoreboard::new();
