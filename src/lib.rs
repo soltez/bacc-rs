@@ -339,6 +339,7 @@ impl BaccaratHand {
 pub struct BaccaratRound {
     player: BaccaratHand,
     banker: BaccaratHand,
+    banker_forced_third: bool,
 }
 
 impl BaccaratRound {
@@ -353,6 +354,7 @@ impl BaccaratRound {
     /// | 3     | Banker pair       | `1` if banker's first two cards share a rank         |
     /// | 4     | Player third card | `1` if player drew a third card                      |
     /// | 5     | Banker third card | `1` if banker drew a third card                      |
+    /// | 6     | Banker forced third | `1` if banker's pre-draw score was 0-2 and player drew |
     /// | 8-11  | Player hand value | Player's hand value 0-9 (sum of card values mod 10)  |
     /// | 12-15 | Banker hand value | Banker's hand value 0-9 (sum of card values mod 10)  |
     ///
@@ -372,6 +374,7 @@ impl BaccaratRound {
         }
         onehot |= u32::from(self.player.is_pair()) << 2 | u32::from(self.banker.is_pair()) << 3;
         onehot |= u32::from(self.player.has_third()) << 4 | u32::from(self.banker.has_third()) << 5;
+        onehot |= u32::from(self.banker_forced_third) << 6;
         onehot |= u32::from(player_hand_value) << 8 | u32::from(banker_hand_value) << 12;
         onehot
     }
@@ -673,6 +676,7 @@ impl Iterator for BaccaratShoe {
         }
         let mut player = BaccaratHand::default();
         let mut banker = BaccaratHand::default();
+        let mut banker_forced_third = false;
         if self.shoe.has_reached_cut_card() {
             self.is_exhausted = true;
         }
@@ -685,13 +689,14 @@ impl Iterator for BaccaratShoe {
                 let player_third = self.pull();
                 player.take(&player_third);
                 if banker_take_third(&banker, player_third) {
+                    banker_forced_third = banker.value() <= 2;
                     banker.take(&self.pull());
                 }
             } else if !stand_pat(&banker) {
                 banker.take(&self.pull());
             }
         }
-        Some(Self::Item { player, banker })
+        Some(Self::Item { player, banker, banker_forced_third })
     }
 }
 
@@ -956,6 +961,7 @@ mod baccarat_round_tests {
         BaccaratRound {
             player: super::hand(player),
             banker: super::hand(banker),
+            banker_forced_third: false,
         }
     }
 
@@ -994,6 +1000,7 @@ mod baccarat_shoe_tests {
     use super::{BaccaratScoreboard, BaccaratShoe};
     use kev::CardInt;
     use num_bigint::BigUint;
+    use rstest::rstest;
     use shoe::Card;
 
     /// Builds a shoe vec where `first` is dealt first and `rest` are the
@@ -1392,5 +1399,90 @@ mod baccarat_shoe_tests {
             *sb.derived_roads(),
             [BigUint::ZERO, BigUint::ZERO, BigUint::ZERO]
         );
+    }
+
+    // -- banker_forced_third flag tests --------------------------------------
+
+    #[rstest]
+    // banker score 0 (K+K=0): always draws -> forced
+    #[case(CardInt::CardKs, CardInt::CardKh, CardInt::Card4s, true)]
+    // banker score 1 (K+A=1): always draws -> forced
+    #[case(CardInt::CardKs, CardInt::CardAh, CardInt::Card4s, true)]
+    // banker score 2 (K+2=2): always draws -> forced (upper boundary)
+    #[case(CardInt::CardKs, CardInt::Card2h, CardInt::Card4s, true)]
+    // banker score 3 (A+2=3), player pip=7 (!=8): banker draws but score above forced threshold
+    #[case(CardInt::CardAs, CardInt::Card2h, CardInt::Card7s, false)]
+    // banker score 3 (A+2=3), player pip=8: banker does not draw at all
+    #[case(CardInt::CardAs, CardInt::Card2h, CardInt::Card8s, false)]
+    fn banker_forced_third_player_drew(
+        #[case] banker_c1: CardInt,
+        #[case] banker_c2: CardInt,
+        #[case] player_third: CardInt,
+        #[case] expected: bool,
+    ) {
+        // player=[2s,3h] value=5 -> draws; banker value varies per case.
+        // Layout (L=10, dealt right-to-left):
+        //   [dummy | b_c3  | p_c3        | b_c2      | p_c2     | b_c1      | p_c1     | Cut | burn  | As ]
+        //    idx 0    1       2             3            4          5            6          7     8       9
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card4d), // banker card 3 (placeholder; dealt only if banker draws)
+            Card::Play(player_third),    // player card 3
+            Card::Play(banker_c2),       // banker card 2
+            Card::Play(CardInt::Card3h), // player card 2
+            Card::Play(banker_c1),       // banker card 1
+            Card::Play(CardInt::Card2s), // player card 1
+            Card::Cut,
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!((round.onehot() & 0x40) != 0, expected);
+    }
+
+    #[test]
+    fn banker_forced_third_false_when_player_stands() {
+        // player=[3s,3h] value=6 -> stand_pat; banker=[Ks,Kh] value=0 -> draws in the
+        // independent branch. banker_forced_third must remain false because the flag
+        // is only set inside the player-drew branch.
+        // Layout (L=9, dealt right-to-left):
+        //   [dummy | b_c3  | b_c2 | p_c2 | b_c1 | p_c1 | Cut | burn | As ]
+        //    idx 0    1       2      3      4      5       6     7      8
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardAd), // banker card 3
+            Card::Play(CardInt::CardKh), // banker card 2
+            Card::Play(CardInt::Card3h), // player card 2
+            Card::Play(CardInt::CardKs), // banker card 1
+            Card::Play(CardInt::Card3s), // player card 1
+            Card::Cut,
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.onehot() & 0x40, 0);
+    }
+
+    #[test]
+    fn banker_forced_third_false_on_natural() {
+        // player=[9s,Kh] value=9 -> natural; no third cards drawn at all.
+        // Layout (L=8, dealt right-to-left):
+        //   [dummy | b_c2 | p_c2 | b_c1 | p_c1 | Cut | burn | As ]
+        //    idx 0    1      2      3      4      5     6      7
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // banker card 2
+            Card::Play(CardInt::CardKh), // player card 2
+            Card::Play(CardInt::Card5h), // banker card 1
+            Card::Play(CardInt::Card9s), // player card 1 (natural)
+            Card::Cut,
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.onehot() & 0x40, 0);
     }
 }
