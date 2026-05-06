@@ -696,7 +696,11 @@ impl Iterator for BaccaratShoe {
                 banker.take(&self.pull());
             }
         }
-        Some(Self::Item { player, banker, banker_forced_third })
+        Some(Self::Item {
+            player,
+            banker,
+            banker_forced_third,
+        })
     }
 }
 
