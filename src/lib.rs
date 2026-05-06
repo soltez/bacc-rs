@@ -354,7 +354,6 @@ impl BaccaratRound {
     /// | 3     | Banker pair       | `1` if banker's first two cards share a rank         |
     /// | 4     | Player third card | `1` if player drew a third card                      |
     /// | 5     | Banker third card | `1` if banker drew a third card                      |
-    /// | 6     | Banker forced third | `1` if banker's pre-draw score was 0-2 and player drew |
     /// | 8-11  | Player hand value | Player's hand value 0-9 (sum of card values mod 10)  |
     /// | 12-15 | Banker hand value | Banker's hand value 0-9 (sum of card values mod 10)  |
     ///
@@ -374,7 +373,6 @@ impl BaccaratRound {
         }
         onehot |= u32::from(self.player.is_pair()) << 2 | u32::from(self.banker.is_pair()) << 3;
         onehot |= u32::from(self.player.has_third()) << 4 | u32::from(self.banker.has_third()) << 5;
-        onehot |= u32::from(self.banker_forced_third) << 6;
         onehot |= u32::from(player_hand_value) << 8 | u32::from(banker_hand_value) << 12;
         onehot
     }
@@ -389,6 +387,12 @@ impl BaccaratRound {
     #[must_use]
     pub fn banker_cards(&self) -> &[CardInt] {
         self.banker.cards()
+    }
+
+    /// Returns `true` if the banker's pre-draw score was 0-2 and the player drew a third card.
+    #[must_use]
+    pub fn is_forced_third(&self) -> bool {
+        self.banker_forced_third
     }
 }
 
@@ -1442,7 +1446,7 @@ mod baccarat_shoe_tests {
         ];
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
-        assert_eq!((round.onehot() & 0x40) != 0, expected);
+        assert_eq!(round.is_forced_third(), expected);
     }
 
     #[test]
@@ -1466,7 +1470,7 @@ mod baccarat_shoe_tests {
         ];
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
-        assert_eq!(round.onehot() & 0x40, 0);
+        assert!(!round.is_forced_third());
     }
 
     #[test]
@@ -1487,6 +1491,6 @@ mod baccarat_shoe_tests {
         ];
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
-        assert_eq!(round.onehot() & 0x40, 0);
+        assert!(!round.is_forced_third());
     }
 }
