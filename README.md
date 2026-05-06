@@ -13,13 +13,12 @@ arbitrary-precision integers.
   and banker card slices and a compact `onehot` encoding of the outcome.
 ```
 +--------+--------+--------+--------+
-|-xxxxxxx|xxttSSss|jjjjiiii|xf33ppww|
+|-xxxxxxx|xxttSSss|jjjjiiii|xx33ppww|
 +--------+--------+--------+--------+
 
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
 # 33 = third card flag (00=none, 01=player, 10=banker, 11=both)
-# f  = banker forced third flag (0=false, 1=true)
 # iiii = player hand value (0~9)
 # jjjj = banker hand value (0~9)
 # (reserved) ss = two cards suited flag (00=none, 01=player, 10=banker, 11=both)
