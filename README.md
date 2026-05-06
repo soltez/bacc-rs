@@ -22,7 +22,7 @@ arbitrary-precision integers.
 # f  = banker forced third flag (0=false, 1=true)
 # iiii = player hand value (0~9)
 # jjjj = banker hand value (0~9)
-# (reserved) ss = two cards suited flag (00=none, 01=player, 10=banker, 11=both)
+# (reserved) ss = two cards suited flag (00=none, 01=player, 10=banker, 11=both)
 # (reserved) SS = three cards suited flag (00=none, 01=player, 10=banker, 11=both)
 # (reserved) tt = trips flag (00=none, 01=player, 10=banker, 11=both)
 ```
@@ -44,7 +44,7 @@ All five scoreboards are stored as `BigUint` shift-registers:
 |<-col1->|<-col2->|  ...   |<-coln->|
 
 # ww = outcome (01=player, 10=banker, 11=tie)
-# pp = pair flag (00=none, 01=player, 10=banker, 11=both)
+# pp = pair flag (00=none, 01=player, 10=banker, 11=both)
 # vvvv = winning hand value (0~9)
 ```
 - **Big road** - variable-width column shift-register, newest column at
@@ -58,7 +58,7 @@ All five scoreboards are stored as `BigUint` shift-registers:
 
 # rrrrrrr = row count (0~127)
 # ww = outcome (01=player, 10=banker, 11=tie)
-# pp = pair flag (00=none, 01=player, 10=banker, 11=both)
+# pp = pair flag (00=none, 01=player, 10=banker, 11=both)
 # vvvv = winning hand value (0~9)
 # ttttttt = tie count (0~127)
 ```
