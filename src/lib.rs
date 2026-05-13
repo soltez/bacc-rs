@@ -10,7 +10,7 @@
 //!   a plain `for` loop.
 //! - [`BaccaratScoreboard`] - tracks the five scoreboards.
 //! - [`BaccaratRound`] - the resolved outcome of one round. Exposes the player
-//!   and banker card slices and a compact [`BaccaratRound::onehot`] encoding of
+//!   and banker card slices and a compact [`BaccaratRound::encode`] encoding of
 //!   the outcome.
 //! - [`BaccaratHand`] - the cards dealt to one side, with hand value calculation,
 //!   pair detection, and third-card flag.
@@ -141,14 +141,14 @@ fn banker_take_third(banker_hand: &BaccaratHand, player_third_card: CardInt) -> 
 ///
 /// Returns any I/O error produced by `out`.
 pub fn write_outcome<W: std::io::Write>(input: &BaccaratRound, out: &mut W) -> std::io::Result<()> {
-    let onehot = input.onehot();
-    let outcome = match onehot & 0x3 {
+    let bits = input.encode();
+    let outcome = match bits & 0x3 {
         1 => "Player",
         2 => "Banker",
         _ => "Tie",
     };
-    let player_value = onehot >> 8 & 0xF;
-    let banker_value = onehot >> 12 & 0xF;
+    let player_value = bits >> 8 & 0xF;
+    let banker_value = bits >> 12 & 0xF;
     writeln!(
         out,
         "Outcome: {outcome} (player={player_value} banker={banker_value})"
@@ -362,19 +362,19 @@ impl BaccaratRound {
     /// Panics if either hand contains fewer than two cards, as
     /// [`BaccaratHand::is_pair`] indexes `cards[0]` and `cards[1]` unconditionally.
     #[must_use]
-    pub fn onehot(&self) -> u32 {
-        let mut onehot: u32 = 3;
+    pub fn encode(&self) -> u32 {
+        let mut bits: u32 = 3;
         let player_hand_value: u8 = self.player.value();
         let banker_hand_value: u8 = self.banker.value();
         if player_hand_value > banker_hand_value {
-            onehot &= 1;
+            bits &= 1;
         } else if player_hand_value < banker_hand_value {
-            onehot &= 2;
+            bits &= 2;
         }
-        onehot |= u32::from(self.player.is_pair()) << 2 | u32::from(self.banker.is_pair()) << 3;
-        onehot |= u32::from(self.player.has_third()) << 4 | u32::from(self.banker.has_third()) << 5;
-        onehot |= u32::from(player_hand_value) << 8 | u32::from(banker_hand_value) << 12;
-        onehot
+        bits |= u32::from(self.player.is_pair()) << 2 | u32::from(self.banker.is_pair()) << 3;
+        bits |= u32::from(self.player.has_third()) << 4 | u32::from(self.banker.has_third()) << 5;
+        bits |= u32::from(player_hand_value) << 8 | u32::from(banker_hand_value) << 12;
+        bits
     }
 
     /// Returns a slice of the player's cards.
@@ -428,7 +428,7 @@ impl BaccaratScoreboard {
 
     /// Updates all five scoreboards immediately after a completed round.
     pub fn update(&mut self, round: &BaccaratRound) {
-        let bead = Self::bead_byte(round.onehot());
+        let bead = Self::bead_byte(round.encode());
         let is_tie = bead & 0x3 == 0x3;
         self.update_bead_plate(bead);
         self.update_big_road(bead, is_tie);
@@ -463,7 +463,7 @@ impl BaccaratScoreboard {
         &self.derived_roads
     }
 
-    /// Encodes a round's `onehot` value into a single bead byte.
+    /// Converts a round's packed encoding into a single bead byte.
     ///
     /// | Bits | Content |
     /// |------|---------|
@@ -472,15 +472,15 @@ impl BaccaratScoreboard {
     /// | 2    | Player pair flag |
     /// | 1-0  | Outcome (`1` = player, `2` = banker, `3` = tie) |
     ///
-    /// Banker wins use the banker's hand value in the high nibble (bits 12-15 of `onehot`);
-    /// player wins and ties use the player's hand value (bits 8-11 of `onehot`).
-    fn bead_byte(onehot: u32) -> u8 {
-        let low_nib: u8 = (onehot & 0xF) as u8;
+    /// Banker wins use the banker's hand value in the high nibble (bits 12-15 of the packed value);
+    /// player wins and ties use the player's hand value (bits 8-11 of the packed value).
+    fn bead_byte(packed: u32) -> u8 {
+        let low_nib: u8 = (packed & 0xF) as u8;
         let n: u8 = match low_nib & 0x3 {
             2 => 8,
             _ => 4,
         };
-        low_nib | (onehot >> n & 0xF0) as u8
+        low_nib | (packed >> n & 0xF0) as u8
     }
 
     /// Prepends `bead` to the bead-plate shift-register; most recent round is at bits 0-7.
@@ -992,14 +992,14 @@ mod baccarat_round_tests {
     #[case(&[CardInt::Card2h, CardInt::Card3d, CardInt::Card4c], &[CardInt::Card3h, CardInt::Card4d, CardInt::Card5c], 0x2931)]
     // both pairs: bits 2+3 set, player wins (2 vs 0)
     #[case(&[CardInt::CardAs, CardInt::CardAh], &[CardInt::CardKs, CardInt::CardKh], 0x020D)]
-    fn onehot(#[case] player: &[CardInt], #[case] banker: &[CardInt], #[case] expected: u32) {
-        assert_eq!(round(player, banker).onehot(), expected);
+    fn encode(#[case] player: &[CardInt], #[case] banker: &[CardInt], #[case] expected: u32) {
+        assert_eq!(round(player, banker).encode(), expected);
     }
 
     #[test]
     #[should_panic]
-    fn onehot_panics_if_player_has_fewer_than_two_cards() {
-        let _ = round(&[CardInt::CardAs], &[CardInt::CardKs, CardInt::CardKh]).onehot();
+    fn encode_panics_if_player_has_fewer_than_two_cards() {
+        let _ = round(&[CardInt::CardAs], &[CardInt::CardKs, CardInt::CardKh]).encode();
     }
 }
 

@@ -10,7 +10,7 @@ arbitrary-precision integers.
   cut-card exhaustion. Implements `Iterator<Item = BaccaratRound>` so
   rounds can be consumed with a plain `for` loop.
 - `BaccaratRound` - the resolved outcome of one round. Exposes player
-  and banker card slices and a compact `onehot` encoding of the outcome.
+  and banker card slices and a compact binary encoding of the outcome via `encode`.
 ```
 +--------+--------+--------+--------+
 |-xxxxxxx|xxttSSss|jjjjiiii|xx33ppww|
