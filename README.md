@@ -49,11 +49,11 @@ All five scoreboards are stored as `BigUint` shift-registers:
 - **Big road** - variable-width column shift-register, newest column at
   the low end.
 ```
-...+--------+--------+--------+--------+--------+--------+--------+--------+
-...|-ttttttt|vvvvppww|-rrrrrrr|-ttttttt|vvvvppww|-ttttttt|vvvvppww|-rrrrrrr|
-...+--------+--------+--------+--------+--------+--------+--------+--------+
-   |<---   row 1  -->|  ...   |<--  row n-1  -->|<---   row n  -->|
-   |<---   col 1  -->|  ...   |<--            col n            -->|
++--------+--------+-----+--------+--------+--------+-----+--------+--------+-----+--------+--------+--------+--------+--------+
+|-ttttttt|vvvvppww| ... |-ttttttt|vvvvppww|-rrrrrrr| ... |-ttttttt|vvvvppww| ... |-ttttttt|vvvvppww|-ttttttt|vvvvppww|-rrrrrrr|
++--------+--------+-----+--------+--------+--------+-----+--------+--------+-----+--------+--------+--------+--------+--------+
+|<---   row 1  -->| ... |<---   row j  -->|        | ... |<--   row 1   -->| ... |<--  row i-1  -->|<---   row i  -->|
+|<---                   col 1                   -->| ... |<--                            col n                             -->|
 
 # rrrrrrr = row count (0~127)
 # ww = outcome (01=player, 10=banker, 11=tie)
