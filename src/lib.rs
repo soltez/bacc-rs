@@ -389,9 +389,9 @@ impl Iterator for BaccaratShoe {
 /// [`update`]: BaccaratScoreboard::update
 #[derive(Default)]
 pub struct BaccaratScoreboard {
-    // Shift-register of bead bytes, newest at bits 0-7.
+    // Bead bytes in chronological order (oldest at index 0, newest at the end).
     // Each byte: bits 7-4 = winner's hand value, bits 3-2 = pair flags, bits 1-0 = outcome.
-    bead_plate: BigUint,
+    bead_plate: Vec<u8>,
     // Variable-width column shift-register. Each column occupies (1 + 2n) bytes (n = row count),
     // packed at the low end:
     //   byte 0       - row_count n
@@ -425,15 +425,15 @@ impl BaccaratScoreboard {
 
     /// Resets all five scoreboards to zero.
     pub fn clear(&mut self) {
-        self.bead_plate = BigUint::ZERO;
+        self.bead_plate.clear();
         self.big_road = BigUint::ZERO;
         self.derived_roads = [BigUint::ZERO, BigUint::ZERO, BigUint::ZERO];
     }
 
     /// Returns the bead plate as a shift-register of bead bytes, newest at bits 0-7.
     #[must_use]
-    pub fn bead_plate(&self) -> &BigUint {
-        &self.bead_plate
+    pub fn bead_plate(&self) -> BigUint {
+        BigUint::from_bytes_be(&self.bead_plate)
     }
 
     /// Returns the big road as a variable-width column shift-register, newest column at the low end.
@@ -469,10 +469,9 @@ impl BaccaratScoreboard {
         low_nib | (packed >> n & 0xF0) as u8
     }
 
-    /// Prepends `bead` to the bead-plate shift-register; most recent round is at bits 0-7.
+    /// Appends `bead` to the bead-plate byte buffer.
     fn update_bead_plate(&mut self, bead: u8) {
-        self.bead_plate <<= 8;
-        self.bead_plate |= BigUint::from(bead);
+        self.bead_plate.push(bead);
     }
 
     /// Advances the big road by one round.
@@ -1531,7 +1530,7 @@ mod baccarat_scoreboard_tests {
             assert_eq!(round.cut_card_index(), None);
         }
         // bead_plate = (round1_bead << 8) | round2_bead = (0x93 << 8) | 0x62 = 0x9362 = 37730.
-        assert_eq!(*sb.bead_plate(), BigUint::from(37730u32));
+        assert_eq!(sb.bead_plate(), BigUint::from(37730u32));
         assert_eq!(*sb.big_road(), BigUint::from(90625u32));
         for _ in 0..8 {
             let round = shoe.next().expect("round should be dealt");
@@ -1545,7 +1544,7 @@ mod baccarat_scoreboard_tests {
         sb.update(&round12);
         assert_eq!(round12.cut_card_index(), None);
         assert_eq!(
-            *sb.bead_plate(),
+            sb.bead_plate(),
             BigUint::parse_bytes(b"936292937381619182917271", 16).expect("valid bead_plate hex")
         );
         assert_eq!(
@@ -1562,7 +1561,7 @@ mod baccarat_scoreboard_tests {
             ]
         );
         sb.clear();
-        assert_eq!(*sb.bead_plate(), BigUint::ZERO);
+        assert_eq!(sb.bead_plate(), BigUint::ZERO);
         assert_eq!(*sb.big_road(), BigUint::ZERO);
         assert_eq!(
             *sb.derived_roads(),
