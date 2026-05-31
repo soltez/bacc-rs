@@ -190,6 +190,12 @@ impl BaccaratRound {
     /// - 3: banker card 2
     /// - 4: player card 3 (if drawn)
     /// - 5: banker card 3 (if drawn)
+    ///
+    /// The value also signals shoe exhaustion:
+    /// - `Some(0)`: the cut card was already past when this round started; this is the last round.
+    /// - `Some(1..=5)`: the cut card was consumed during this round; exactly one more round will be dealt.
+    /// - `None`: the cut card was not encountered; the shoe may have more rounds or this is the last round
+    ///   (because a prior round had `cut_card_index = Some(1..=5)`).
     #[must_use]
     pub fn cut_card_index(&self) -> Option<u8> {
         self.cut_card_index
@@ -1012,6 +1018,7 @@ mod baccarat_shoe_tests {
     #[test]
     fn cut_card_index_at_0() {
         // Cut immediately after burn, before player card 1.
+        // has_reached_cut_card() is true at the start of next() -> this IS the last round.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
             Card::Play(CardInt::CardKd), // banker card 2
@@ -1025,13 +1032,19 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(0));
+        assert!(shoe.next().is_none());
     }
 
     #[test]
     fn cut_card_index_at_1() {
         // Cut before banker card 1.
+        // Round 2 cards (indices 1-4) give the last round after this one.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // round 2 banker card 2
+            Card::Play(CardInt::CardAh), // round 2 player card 2
+            Card::Play(CardInt::Card4d), // round 2 banker card 1
+            Card::Play(CardInt::Card8h), // round 2 player card 1 (natural: 8+A=9)
             Card::Play(CardInt::CardKd), // banker card 2
             Card::Play(CardInt::CardKh), // player card 2
             Card::Play(CardInt::CardKs), // banker card 1
@@ -1043,13 +1056,23 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(1));
+        let last = shoe
+            .next()
+            .expect("one more round follows when cut card index > 0");
+        assert_eq!(last.cut_card_index(), None);
+        assert!(shoe.next().is_none());
     }
 
     #[test]
     fn cut_card_index_at_2() {
         // Cut before player card 2.
+        // Round 2 cards (indices 1-4) give the last round after this one.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // round 2 banker card 2
+            Card::Play(CardInt::CardAh), // round 2 player card 2
+            Card::Play(CardInt::Card4d), // round 2 banker card 1
+            Card::Play(CardInt::Card8h), // round 2 player card 1 (natural: 8+A=9)
             Card::Play(CardInt::CardKd), // banker card 2
             Card::Play(CardInt::CardKh), // player card 2
             Card::Cut,
@@ -1061,13 +1084,23 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(2));
+        let last = shoe
+            .next()
+            .expect("one more round follows when cut card index > 0");
+        assert_eq!(last.cut_card_index(), None);
+        assert!(shoe.next().is_none());
     }
 
     #[test]
     fn cut_card_index_at_3() {
         // Cut before banker card 2.
+        // Round 2 cards (indices 1-4) give the last round after this one.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // round 2 banker card 2
+            Card::Play(CardInt::CardAh), // round 2 player card 2
+            Card::Play(CardInt::Card4d), // round 2 banker card 1
+            Card::Play(CardInt::Card8h), // round 2 player card 1 (natural: 8+A=9)
             Card::Play(CardInt::CardKd), // banker card 2
             Card::Cut,
             Card::Play(CardInt::CardKh), // player card 2
@@ -1079,13 +1112,23 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(3));
+        let last = shoe
+            .next()
+            .expect("one more round follows when cut card index > 0");
+        assert_eq!(last.cut_card_index(), None);
+        assert!(shoe.next().is_none());
     }
 
     #[test]
     fn cut_card_index_at_4() {
         // player=[2s,3h] value=5 -> draws; banker=[3s,4h] value=7 -> stands. Cut before player card 3.
+        // Round 2 cards (indices 1-4) give the last round after this one.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // round 2 banker card 2
+            Card::Play(CardInt::CardAh), // round 2 player card 2
+            Card::Play(CardInt::Card4d), // round 2 banker card 1
+            Card::Play(CardInt::Card8h), // round 2 player card 1 (natural: 8+A=9)
             Card::Play(CardInt::Card5c), // player card 3
             Card::Cut,
             Card::Play(CardInt::Card4h), // banker card 2
@@ -1098,13 +1141,23 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(4));
+        let last = shoe
+            .next()
+            .expect("one more round follows when cut card index > 0");
+        assert_eq!(last.cut_card_index(), None);
+        assert!(shoe.next().is_none());
     }
 
     #[test]
     fn cut_card_index_at_5() {
         // player=[2s,3h] value=5 -> draws p3=6c (pip=6); banker=[3s,3d] value=6 -> draws. Cut before banker card 3.
+        // Round 2 cards (indices 1-4) give the last round after this one.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card2d), // round 2 banker card 2
+            Card::Play(CardInt::CardAh), // round 2 player card 2
+            Card::Play(CardInt::Card4d), // round 2 banker card 1
+            Card::Play(CardInt::Card8h), // round 2 player card 1 (natural: 8+A=9)
             Card::Play(CardInt::CardKs), // banker card 3
             Card::Cut,
             Card::Play(CardInt::Card6c), // player card 3 (pip=6)
@@ -1118,6 +1171,11 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.cut_card_index(), Some(5));
+        let last = shoe
+            .next()
+            .expect("one more round follows when cut card index > 0");
+        assert_eq!(last.cut_card_index(), None);
+        assert!(shoe.next().is_none());
     }
 
     // -- banker_forced_third flag tests --------------------------------------
