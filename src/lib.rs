@@ -79,62 +79,6 @@ fn pip_value(card: CardInt) -> u8 {
     }
 }
 
-/// Returns `true` if neither hand holds a natural (8 or 9).
-///
-/// A natural ends the round immediately; third-card rules only apply when both
-/// sides score 0-7 on their initial two cards.
-///
-/// # Panics
-///
-/// Panics if either hand already holds a third card.
-fn no_natural(p: &BaccaratHand, b: &BaccaratHand) -> bool {
-    assert!(!p.has_third() && !b.has_third());
-    matches!((p.value(), b.value()), (0..=7, 0..=7))
-}
-
-/// Returns `true` if `hand` scores 6 or 7 and must stand pat.
-///
-/// Used for both player and banker. A hand valued 6 or 7 stands without
-/// drawing a third card.
-///
-/// # Panics
-///
-/// Panics if `hand` already holds a third card.
-fn stand_pat(hand: &BaccaratHand) -> bool {
-    assert!(!hand.has_third());
-    matches!(hand.value(), 6 | 7)
-}
-
-/// Returns `true` if the banker draws a third card given the player's third card.
-///
-/// Applies the standard banker drawing table. Called only when the player has
-/// already drawn a third card and neither side holds a natural.
-///
-/// | Banker score | Draws when player's third card pip is |
-/// |--------------|---------------------------------------|
-/// | 0-2          | Always draws                          |
-/// | 3            | Any except 8                          |
-/// | 4            | 2-7                                   |
-/// | 5            | 4-7                                   |
-/// | 6            | 6-7                                   |
-/// | 7            | Never draws                           |
-///
-/// # Panics
-///
-/// Panics if `banker_hand` already holds a third card.
-fn banker_take_third(banker_hand: &BaccaratHand, player_third_card: CardInt) -> bool {
-    assert!(!banker_hand.has_third());
-    let p = pip_value(player_third_card);
-    match banker_hand.value() {
-        0..=2 => true,
-        3 => p != 8,
-        4 => matches!(p, 2..=7),
-        5 => matches!(p, 4..=7),
-        6 => matches!(p, 6 | 7),
-        _ => false,
-    }
-}
-
 /// Writes a [`BaccaratRound`] summary to `out`.
 ///
 /// # Errors
@@ -650,6 +594,62 @@ impl BaccaratShoe {
             }
         }
     }
+
+    /// Returns `true` if neither hand holds a natural (8 or 9).
+    ///
+    /// A natural ends the round immediately; third-card rules only apply when both
+    /// sides score 0-7 on their initial two cards.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either hand already holds a third card.
+    fn no_natural(p: &BaccaratHand, b: &BaccaratHand) -> bool {
+        assert!(!p.has_third() && !b.has_third());
+        matches!((p.value(), b.value()), (0..=7, 0..=7))
+    }
+
+    /// Returns `true` if `hand` scores 6 or 7 and must stand pat.
+    ///
+    /// Used for both player and banker. A hand valued 6 or 7 stands without
+    /// drawing a third card.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `hand` already holds a third card.
+    fn stand_pat(hand: &BaccaratHand) -> bool {
+        assert!(!hand.has_third());
+        matches!(hand.value(), 6 | 7)
+    }
+
+    /// Returns `true` if the banker draws a third card given the player's third card.
+    ///
+    /// Applies the standard banker drawing table. Called only when the player has
+    /// already drawn a third card and neither side holds a natural.
+    ///
+    /// | Banker score | Draws when player's third card pip is |
+    /// |--------------|---------------------------------------|
+    /// | 0-2          | Always draws                          |
+    /// | 3            | Any except 8                          |
+    /// | 4            | 2-7                                   |
+    /// | 5            | 4-7                                   |
+    /// | 6            | 6-7                                   |
+    /// | 7            | Never draws                           |
+    ///
+    /// # Panics
+    ///
+    /// Panics if `banker_hand` already holds a third card.
+    fn banker_take_third(banker_hand: &BaccaratHand, player_third_card: CardInt) -> bool {
+        assert!(!banker_hand.has_third());
+        let p = pip_value(player_third_card);
+        match banker_hand.value() {
+            0..=2 => true,
+            3 => p != 8,
+            4 => matches!(p, 2..=7),
+            5 => matches!(p, 4..=7),
+            6 => matches!(p, 6 | 7),
+            _ => false,
+        }
+    }
 }
 
 impl From<Vec<Card>> for BaccaratShoe {
@@ -688,15 +688,15 @@ impl Iterator for BaccaratShoe {
         banker.take(&self.pull());
         player.take(&self.pull());
         banker.take(&self.pull());
-        if no_natural(&player, &banker) {
-            if !stand_pat(&player) {
+        if Self::no_natural(&player, &banker) {
+            if !Self::stand_pat(&player) {
                 let player_third = self.pull();
                 player.take(&player_third);
-                if banker_take_third(&banker, player_third) {
+                if Self::banker_take_third(&banker, player_third) {
                     banker_forced_third = banker.value() <= 2;
                     banker.take(&self.pull());
                 }
-            } else if !stand_pat(&banker) {
+            } else if !Self::stand_pat(&banker) {
                 banker.take(&self.pull());
             }
         }
@@ -742,7 +742,7 @@ mod pip_value_tests {
 
 #[cfg(test)]
 mod no_natural_tests {
-    use super::no_natural;
+    use super::BaccaratShoe;
     use kev::CardInt;
     use rstest::rstest;
 
@@ -761,7 +761,7 @@ mod no_natural_tests {
         #[case] expected: bool,
     ) {
         assert_eq!(
-            no_natural(&super::hand(player), &super::hand(banker)),
+            BaccaratShoe::no_natural(&super::hand(player), &super::hand(banker)),
             expected
         );
     }
@@ -772,7 +772,7 @@ mod no_natural_tests {
     fn panics_if_player_has_third() {
         let p = super::hand(&[CardInt::CardAs, CardInt::Card2h, CardInt::Card3d]);
         let b = super::hand(&[CardInt::Card4s, CardInt::Card5h]);
-        no_natural(&p, &b);
+        BaccaratShoe::no_natural(&p, &b);
     }
 
     // panics if banker hand already has a third card
@@ -781,13 +781,13 @@ mod no_natural_tests {
     fn panics_if_banker_has_third() {
         let p = super::hand(&[CardInt::Card4s, CardInt::Card5h]);
         let b = super::hand(&[CardInt::CardAs, CardInt::Card2h, CardInt::Card3d]);
-        no_natural(&p, &b);
+        BaccaratShoe::no_natural(&p, &b);
     }
 }
 
 #[cfg(test)]
 mod stand_pat_tests {
-    use super::stand_pat;
+    use super::BaccaratShoe;
     use kev::CardInt;
     use rstest::rstest;
 
@@ -798,20 +798,20 @@ mod stand_pat_tests {
     #[case(&[CardInt::Card2s, CardInt::Card3h], true)] // value=5: draws
     #[case(&[CardInt::CardKs, CardInt::CardKh], true)] // value=0: draws
     fn stand_pat_cases(#[case] cards: &[CardInt], #[case] draws: bool) {
-        assert_eq!(stand_pat(&super::hand(cards)), !draws);
+        assert_eq!(BaccaratShoe::stand_pat(&super::hand(cards)), !draws);
     }
 
     #[test]
     #[should_panic]
     fn panics_if_hand_has_third() {
         let h = super::hand(&[CardInt::CardAs, CardInt::Card2h, CardInt::Card3d]);
-        stand_pat(&h);
+        BaccaratShoe::stand_pat(&h);
     }
 }
 
 #[cfg(test)]
 mod banker_take_third_tests {
-    use super::banker_take_third;
+    use super::BaccaratShoe;
     use kev::CardInt;
     use rstest::rstest;
 
@@ -821,7 +821,10 @@ mod banker_take_third_tests {
     #[case(&[CardInt::CardKs, CardInt::CardAh], CardInt::Card8s)] // value=1
     #[case(&[CardInt::CardKs, CardInt::Card2h], CardInt::Card8s)] // value=2
     fn score_0_to_2_always_draws(#[case] banker: &[CardInt], #[case] player_third: CardInt) {
-        assert!(banker_take_third(&super::hand(banker), player_third));
+        assert!(BaccaratShoe::banker_take_third(
+            &super::hand(banker),
+            player_third
+        ));
     }
 
     // score 3: draws on any pip except 8
@@ -834,7 +837,10 @@ mod banker_take_third_tests {
     #[case(CardInt::Card8s, false)] // pip=8: does not draw
     fn score_3(#[case] player_third: CardInt, #[case] expected: bool) {
         let banker = super::hand(&[CardInt::CardAs, CardInt::Card2h]); // value=3
-        assert_eq!(banker_take_third(&banker, player_third), expected);
+        assert_eq!(
+            BaccaratShoe::banker_take_third(&banker, player_third),
+            expected
+        );
     }
 
     // score 4: draws on pip 2-7
@@ -846,7 +852,10 @@ mod banker_take_third_tests {
     #[case(CardInt::Card8s, false)] // pip=8: above range
     fn score_4(#[case] player_third: CardInt, #[case] expected: bool) {
         let banker = super::hand(&[CardInt::Card2s, CardInt::Card2h]); // value=4
-        assert_eq!(banker_take_third(&banker, player_third), expected);
+        assert_eq!(
+            BaccaratShoe::banker_take_third(&banker, player_third),
+            expected
+        );
     }
 
     // score 5: draws on pip 4-7
@@ -858,7 +867,10 @@ mod banker_take_third_tests {
     #[case(CardInt::Card8s, false)] // pip=8: above range
     fn score_5(#[case] player_third: CardInt, #[case] expected: bool) {
         let banker = super::hand(&[CardInt::Card2s, CardInt::Card3h]); // value=5
-        assert_eq!(banker_take_third(&banker, player_third), expected);
+        assert_eq!(
+            BaccaratShoe::banker_take_third(&banker, player_third),
+            expected
+        );
     }
 
     // score 6: draws on pip 6-7 (covered by iterator tests; boundary cases added here)
@@ -869,7 +881,10 @@ mod banker_take_third_tests {
     #[case(CardInt::Card8s, false)] // pip=8: above range
     fn score_6(#[case] player_third: CardInt, #[case] expected: bool) {
         let banker = super::hand(&[CardInt::Card3s, CardInt::Card3h]); // value=6
-        assert_eq!(banker_take_third(&banker, player_third), expected);
+        assert_eq!(
+            BaccaratShoe::banker_take_third(&banker, player_third),
+            expected
+        );
     }
 
     // score 7: never draws
@@ -879,7 +894,7 @@ mod banker_take_third_tests {
     #[case(CardInt::CardKs)]
     fn score_7_never_draws(#[case] player_third: CardInt) {
         let banker = super::hand(&[CardInt::Card3s, CardInt::Card4h]); // value=7
-        assert!(!banker_take_third(&banker, player_third));
+        assert!(!BaccaratShoe::banker_take_third(&banker, player_third));
     }
 
     // panic if banker hand already has a third card
@@ -887,7 +902,7 @@ mod banker_take_third_tests {
     #[should_panic]
     fn panics_if_banker_has_third() {
         let banker = super::hand(&[CardInt::CardAs, CardInt::Card2h, CardInt::Card3d]);
-        banker_take_third(&banker, CardInt::Card4s);
+        BaccaratShoe::banker_take_third(&banker, CardInt::Card4s);
     }
 }
 
