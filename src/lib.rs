@@ -33,20 +33,16 @@
 //!
 //! ```rust
 //! use bacc::{BaccaratScoreboard, BaccaratShoe};
-//! use bacc::{write_outcome, write_bead_plate, write_big_road, write_derived_roads};
-//! use num_bigint::BigUint;
 //!
 //! let mut sb = BaccaratScoreboard::new();
 //! let shoe = BaccaratShoe::new(8, 3, 0.965); // 8 deck, 3 shuffle passes, 96.5% penetration
 //! for round in shoe {
 //!     sb.update(&round);
-//!     let bead_plate: &BigUint = sb.bead_plate();
-//!     let big_road: &BigUint = sb.big_road();
-//!     let derived_roads: &[BigUint; 3] = sb.derived_roads();
-//!     write_outcome(&round, &mut std::io::stdout()).unwrap();
-//!     write_bead_plate(bead_plate, &mut std::io::stdout()).unwrap();
-//!     write_big_road(big_road, &mut std::io::stdout()).unwrap();
-//!     write_derived_roads(derived_roads, &mut std::io::stdout()).unwrap();
+//!     println!("{}", sb.bead_plate());
+//!     println!("{}", sb.big_road());
+//!     for road in sb.derived_roads() {
+//!         println!("{}", road);
+//!     }
 //! }
 //! ```
 
@@ -55,7 +51,6 @@ use num_bigint::BigUint;
 use num_traits::cast::ToPrimitive;
 use num_traits::{One, Zero};
 use shoe::{Card, Shoe};
-use std::collections::VecDeque;
 
 /// Returns the pip value of a single [`CardInt`].
 ///
@@ -77,161 +72,6 @@ fn pip_value(card: CardInt) -> u8 {
         Rank::Trey => 3,
         Rank::Deuce => 2,
     }
-}
-
-/// Writes a [`BaccaratRound`] summary to `out`.
-///
-/// # Errors
-///
-/// Returns any I/O error produced by `out`.
-pub fn write_outcome<W: std::io::Write>(input: &BaccaratRound, out: &mut W) -> std::io::Result<()> {
-    let bits = input.encode();
-    let outcome = match bits & 0x3 {
-        1 => "Player",
-        2 => "Banker",
-        _ => "Tie",
-    };
-    let player_value = bits >> 8 & 0xF;
-    let banker_value = bits >> 12 & 0xF;
-    writeln!(
-        out,
-        "Outcome: {outcome} (player={player_value} banker={banker_value})"
-    )
-}
-
-/// Prints the bead plate scoreboard to `out`.
-///
-/// # Errors
-///
-/// Returns any I/O error produced by `out`.
-///
-/// # Panics
-///
-/// Panics if the internal `bead_plate` encoding is corrupt (column count or
-/// marker fields exceed their expected bit widths).
-pub fn write_bead_plate<W: std::io::Write>(input: &BigUint, out: &mut W) -> std::io::Result<()> {
-    let mut bead_plate = input.clone();
-    let mut deque: VecDeque<String> = VecDeque::new();
-    loop {
-        let bead = (&bead_plate & BigUint::from(0xFFu8)).to_u8().unwrap();
-        if bead == 0 {
-            break;
-        }
-        let mut marker = String::new();
-        if bead & 8 > 0 {
-            marker.push('.');
-        }
-        match bead & 3 {
-            1 => marker.push('P'),
-            2 => marker.push('B'),
-            3 => marker.push('T'),
-            _ => unreachable!("error in encode_bead()"),
-        }
-        let value = (u32::from(bead) & 0xF0) >> 4;
-        marker.push(char::from_digit(value, 10).expect("digit must be in the range 0-9"));
-        if (bead & 4) > 0 {
-            marker.push('.');
-        }
-        deque.push_front(marker);
-        bead_plate >>= 8;
-    }
-    writeln!(out, "Bead Plate:")?;
-    for i in &deque {
-        write!(out, "{i} ")?;
-    }
-    writeln!(out)
-}
-
-/// Prints the big road scoreboard to `out`.
-///
-/// # Errors
-///
-/// Returns any I/O error produced by `out`.
-///
-/// # Panics
-///
-/// Panics if the internal `big_road` encoding is corrupt (column count or
-/// marker fields exceed their expected bit widths).
-pub fn write_big_road<W: std::io::Write>(input: &BigUint, out: &mut W) -> std::io::Result<()> {
-    let mut big_road = input.clone();
-    let mut deque: VecDeque<[u8; 2]> = VecDeque::new();
-    loop {
-        let count = (&big_road & BigUint::from(0xFFu8)).to_u8().unwrap();
-        if count == 0 {
-            break;
-        }
-        let marker = ((&big_road & BigUint::from(0x300u16)) >> 8u8)
-            .to_u8()
-            .unwrap();
-        deque.push_front([marker, count]);
-        big_road >>= 8 * (2 * count + 1) as usize;
-    }
-    if deque.is_empty() {
-        Ok(())
-    } else {
-        writeln!(out, "Big Road:")?;
-        for i in &deque {
-            let marker = match i[0] {
-                1 => "P",
-                2 => "B",
-                _ => unreachable!("error in update_big_road()"),
-            };
-            write!(out, "|{marker}")?;
-        }
-        writeln!(out, "|")?;
-        for i in &deque {
-            write!(out, "|{}", i[1])?;
-        }
-        writeln!(out, "|")
-    }
-}
-
-/// Prints the derived road scoreboards to `out`.
-///
-/// # Errors
-///
-/// Returns any I/O error produced by `out`.
-///
-/// # Panics
-///
-/// Panics if the internal `derived_roads` encoding is corrupt (column count or
-/// marker fields exceed their expected bit widths).
-pub fn write_derived_roads<W: std::io::Write>(
-    input: &[BigUint; 3],
-    out: &mut W,
-) -> std::io::Result<()> {
-    let labels = ["Big Eye Boy:", "Small Road:", "Cockroach Pig:"];
-    for (number, label) in input.iter().zip(labels.iter()) {
-        let mut derived_road = number.clone();
-        let mut deque: VecDeque<[u8; 2]> = VecDeque::new();
-        loop {
-            let count = (&derived_road & BigUint::from(0xFEu8)).to_u8().unwrap() >> 1;
-            if count == 0 {
-                break;
-            }
-            let marker = (&derived_road & BigUint::one()).to_u8().unwrap();
-            deque.push_front([marker, count]);
-            derived_road >>= 8;
-        }
-        if deque.is_empty() {
-            continue;
-        }
-        writeln!(out, "{label}")?;
-        for i in &deque {
-            let marker = match i[0] {
-                0 => "C",
-                1 => "T",
-                _ => unreachable!("error in update_derived_roads()"),
-            };
-            write!(out, "|{marker}")?;
-        }
-        writeln!(out, "|")?;
-        for i in &deque {
-            write!(out, "|{}", i[1])?;
-        }
-        writeln!(out, "|")?;
-    }
-    Ok(())
 }
 
 /// A baccarat hand holding the cards dealt to one side (player or banker).
