@@ -125,6 +125,7 @@ pub struct BaccaratRound {
     player: BaccaratHand,
     banker: BaccaratHand,
     banker_forced_third: bool,
+    cut_card_index: Option<u8>,
 }
 
 impl BaccaratRound {
@@ -179,6 +180,20 @@ impl BaccaratRound {
     pub fn is_forced_third(&self) -> bool {
         self.banker_forced_third
     }
+
+    /// Returns the index of the cut card within this round's card sequence, if it was encountered.
+    ///
+    /// The index counts dealt card positions starting at 0:
+    /// - 0: player card 1
+    /// - 1: banker card 1
+    /// - 2: player card 2
+    /// - 3: banker card 2
+    /// - 4: player card 3 (if drawn)
+    /// - 5: banker card 3 (if drawn)
+    #[must_use]
+    pub fn cut_card_index(&self) -> Option<u8> {
+        self.cut_card_index
+    }
 }
 
 /// A baccarat shoe that deals [`BaccaratRound`]s via the [`Iterator`] trait.
@@ -227,11 +242,12 @@ impl BaccaratShoe {
         }
     }
 
-    fn pull(&mut self) -> CardInt {
+    fn pull(&mut self) -> (CardInt, bool) {
+        let mut saw_cut = false;
         loop {
             match self.shoe.deal().expect("shoe is non-empty") {
-                Card::Play(c) => break c,
-                Card::Cut => {}
+                Card::Play(c) => break (c, saw_cut),
+                Card::Cut => saw_cut = true,
             }
         }
     }
@@ -322,29 +338,40 @@ impl Iterator for BaccaratShoe {
         let mut player = BaccaratHand::default();
         let mut banker = BaccaratHand::default();
         let mut banker_forced_third = false;
+        let mut cut_card_index: Option<u8> = None;
+        let mut card_index: u8 = 0;
         if self.shoe.has_reached_cut_card() {
             self.is_exhausted = true;
         }
-        player.take(&self.pull());
-        banker.take(&self.pull());
-        player.take(&self.pull());
-        banker.take(&self.pull());
+        let mut pull = |shoe: &mut Self| {
+            let (card, saw_cut) = shoe.pull();
+            if saw_cut {
+                cut_card_index = Some(card_index);
+            }
+            card_index += 1;
+            card
+        };
+        player.take(&pull(self));
+        banker.take(&pull(self));
+        player.take(&pull(self));
+        banker.take(&pull(self));
         if Self::no_natural(&player, &banker) {
             if !Self::stand_pat(&player) {
-                let player_third = self.pull();
+                let player_third = pull(self);
                 player.take(&player_third);
                 if Self::banker_take_third(&banker, player_third) {
                     banker_forced_third = banker.value() <= 2;
-                    banker.take(&self.pull());
+                    banker.take(&pull(self));
                 }
             } else if !Self::stand_pat(&banker) {
-                banker.take(&self.pull());
+                banker.take(&pull(self));
             }
         }
         Some(Self::Item {
             player,
             banker,
             banker_forced_third,
+            cut_card_index,
         })
     }
 }
@@ -660,6 +687,7 @@ mod baccarat_round_tests {
             player: super::hand(player),
             banker: super::hand(banker),
             banker_forced_third: false,
+            cut_card_index: None,
         }
     }
 
@@ -721,7 +749,7 @@ mod baccarat_shoe_tests {
         // shoe_vec layout: [Cut, Ks, 2s, As] - 2s is burned, Ks is next.
         let cards = shoe_vec(CardInt::CardAs, &[CardInt::CardKs, CardInt::Card2s]);
         let mut shoe = BaccaratShoe::from(cards);
-        assert_eq!(shoe.pull(), CardInt::CardKs);
+        assert_eq!(shoe.pull(), (CardInt::CardKs, false));
     }
 
     #[test]
@@ -743,7 +771,7 @@ mod baccarat_shoe_tests {
         ];
         let cards = shoe_vec(CardInt::CardKs, &rest);
         let mut shoe = BaccaratShoe::from(cards);
-        assert_eq!(shoe.pull(), CardInt::CardAs);
+        assert_eq!(shoe.pull(), (CardInt::CardAs, false));
     }
 
     #[test]
@@ -829,6 +857,7 @@ mod baccarat_shoe_tests {
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.player_cards(), &[c3, c1]);
         assert_eq!(round.banker_cards(), &[c2, c0]);
+        assert_eq!(round.cut_card_index(), Some(0));
         assert!(shoe.next().is_none());
     }
 
@@ -857,6 +886,7 @@ mod baccarat_shoe_tests {
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.player_cards(), &[r4, r2]);
         assert_eq!(round.banker_cards(), &[r3, r1, r0]);
+        assert_eq!(round.cut_card_index(), Some(0));
         assert!(shoe.next().is_none());
     }
 
@@ -885,6 +915,7 @@ mod baccarat_shoe_tests {
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.player_cards(), &[r4, r2, r0]);
         assert_eq!(round.banker_cards(), &[r3, r1]);
+        assert_eq!(round.cut_card_index(), Some(0));
         assert!(shoe.next().is_none());
     }
 
@@ -915,6 +946,7 @@ mod baccarat_shoe_tests {
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.player_cards(), &[r5, r3, r1]);
         assert_eq!(round.banker_cards(), &[r4, r2, r0]);
+        assert_eq!(round.cut_card_index(), Some(0));
         assert!(shoe.next().is_none());
     }
 
@@ -965,12 +997,127 @@ mod baccarat_shoe_tests {
         let round1 = shoe.next().expect("round 1 should be dealt");
         assert_eq!(round1.player_cards(), &[CardInt::Card9s, CardInt::CardKs]);
         assert_eq!(round1.banker_cards(), &[CardInt::Card5h, CardInt::Card2d]);
+        assert_eq!(round1.cut_card_index(), Some(2));
 
         let round2 = shoe.next().expect("round 2 should be dealt");
         assert_eq!(round2.player_cards(), &[CardInt::Card2h, CardInt::Card5c]);
         assert_eq!(round2.banker_cards(), &[CardInt::Card9c, CardInt::CardKd]);
+        assert_eq!(round2.cut_card_index(), None);
 
         assert!(shoe.next().is_none());
+    }
+
+    // -- cut_card_index tests ------------------------------------------------
+
+    #[test]
+    fn cut_card_index_at_0() {
+        // Cut immediately after burn, before player card 1.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardKd), // banker card 2
+            Card::Play(CardInt::CardKh), // player card 2
+            Card::Play(CardInt::CardKs), // banker card 1
+            Card::Play(CardInt::Card9s), // player card 1 (natural)
+            Card::Cut,
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(0));
+    }
+
+    #[test]
+    fn cut_card_index_at_1() {
+        // Cut before banker card 1.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardKd), // banker card 2
+            Card::Play(CardInt::CardKh), // player card 2
+            Card::Play(CardInt::CardKs), // banker card 1
+            Card::Cut,
+            Card::Play(CardInt::Card9s), // player card 1 (natural)
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(1));
+    }
+
+    #[test]
+    fn cut_card_index_at_2() {
+        // Cut before player card 2.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardKd), // banker card 2
+            Card::Play(CardInt::CardKh), // player card 2
+            Card::Cut,
+            Card::Play(CardInt::CardKs), // banker card 1
+            Card::Play(CardInt::Card9s), // player card 1 (natural)
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(2));
+    }
+
+    #[test]
+    fn cut_card_index_at_3() {
+        // Cut before banker card 2.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardKd), // banker card 2
+            Card::Cut,
+            Card::Play(CardInt::CardKh), // player card 2
+            Card::Play(CardInt::CardKs), // banker card 1
+            Card::Play(CardInt::Card9s), // player card 1 (natural)
+            Card::Play(CardInt::Card5c), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(3));
+    }
+
+    #[test]
+    fn cut_card_index_at_4() {
+        // player=[2s,3h] value=5 -> draws; banker=[3s,4h] value=7 -> stands. Cut before player card 3.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::Card5c), // player card 3
+            Card::Cut,
+            Card::Play(CardInt::Card4h), // banker card 2
+            Card::Play(CardInt::Card3h), // player card 2
+            Card::Play(CardInt::Card3s), // banker card 1
+            Card::Play(CardInt::Card2s), // player card 1
+            Card::Play(CardInt::CardKc), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(4));
+    }
+
+    #[test]
+    fn cut_card_index_at_5() {
+        // player=[2s,3h] value=5 -> draws p3=6c (pip=6); banker=[3s,3d] value=6 -> draws. Cut before banker card 3.
+        let cards = vec![
+            Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
+            Card::Play(CardInt::CardKs), // banker card 3
+            Card::Cut,
+            Card::Play(CardInt::Card6c), // player card 3 (pip=6)
+            Card::Play(CardInt::Card3d), // banker card 2
+            Card::Play(CardInt::Card3h), // player card 2
+            Card::Play(CardInt::Card3s), // banker card 1
+            Card::Play(CardInt::Card2s), // player card 1
+            Card::Play(CardInt::CardKc), // burn card
+            Card::Play(CardInt::CardAs), // first card (pip=1, burns 1)
+        ];
+        let mut shoe = BaccaratShoe::from(cards);
+        let round = shoe.next().expect("round should be dealt");
+        assert_eq!(round.cut_card_index(), Some(5));
     }
 
     // -- banker_forced_third flag tests --------------------------------------
@@ -1011,6 +1158,7 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert_eq!(round.is_forced_third(), expected);
+        assert_eq!(round.cut_card_index(), Some(0));
     }
 
     #[test]
@@ -1035,6 +1183,7 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert!(!round.is_forced_third());
+        assert_eq!(round.cut_card_index(), Some(0));
     }
 
     #[test]
@@ -1056,6 +1205,7 @@ mod baccarat_shoe_tests {
         let mut shoe = BaccaratShoe::from(cards);
         let round = shoe.next().expect("round should be dealt");
         assert!(!round.is_forced_third());
+        assert_eq!(round.cut_card_index(), Some(0));
     }
 
     mod no_natural_tests {
@@ -1320,14 +1470,22 @@ mod baccarat_scoreboard_tests {
         for _ in 0..2 {
             let round = shoe.next().expect("round should be dealt");
             sb.update(&round);
+            assert_eq!(round.cut_card_index(), None);
         }
         // bead_plate = (round1_bead << 8) | round2_bead = (0x93 << 8) | 0x62 = 0x9362 = 37730.
         assert_eq!(*sb.bead_plate(), BigUint::from(37730u32));
         assert_eq!(*sb.big_road(), BigUint::from(90625u32));
-        for _ in 0..10 {
+        for _ in 0..8 {
             let round = shoe.next().expect("round should be dealt");
             sb.update(&round);
+            assert_eq!(round.cut_card_index(), None);
         }
+        let round11 = shoe.next().expect("round 11 should be dealt");
+        sb.update(&round11);
+        assert_eq!(round11.cut_card_index(), Some(3));
+        let round12 = shoe.next().expect("round 12 should be dealt");
+        sb.update(&round12);
+        assert_eq!(round12.cut_card_index(), None);
         assert_eq!(
             *sb.bead_plate(),
             BigUint::parse_bytes(b"936292937381619182917271", 16).expect("valid bead_plate hex")
