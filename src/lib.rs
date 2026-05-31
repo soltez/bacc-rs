@@ -242,7 +242,7 @@ impl BaccaratShoe {
         }
     }
 
-    fn pull(&mut self) -> (CardInt, bool) {
+    fn deal(&mut self) -> (CardInt, bool) {
         let mut saw_cut = false;
         loop {
             match self.shoe.deal().expect("shoe is non-empty") {
@@ -343,28 +343,28 @@ impl Iterator for BaccaratShoe {
         if self.shoe.has_reached_cut_card() {
             self.is_exhausted = true;
         }
-        let mut pull = |shoe: &mut Self| {
-            let (card, saw_cut) = shoe.pull();
+        let mut deal = |shoe: &mut Self| {
+            let (card, saw_cut) = shoe.deal();
             if saw_cut {
                 cut_card_index = Some(card_index);
             }
             card_index += 1;
             card
         };
-        player.take(&pull(self));
-        banker.take(&pull(self));
-        player.take(&pull(self));
-        banker.take(&pull(self));
+        player.take(&deal(self));
+        banker.take(&deal(self));
+        player.take(&deal(self));
+        banker.take(&deal(self));
         if Self::no_natural(&player, &banker) {
             if !Self::stand_pat(&player) {
-                let player_third = pull(self);
+                let player_third = deal(self);
                 player.take(&player_third);
                 if Self::banker_take_third(&banker, player_third) {
                     banker_forced_third = banker.value() <= 2;
-                    banker.take(&pull(self));
+                    banker.take(&deal(self));
                 }
             } else if !Self::stand_pat(&banker) {
-                banker.take(&pull(self));
+                banker.take(&deal(self));
             }
         }
         Some(Self::Item {
@@ -749,7 +749,7 @@ mod baccarat_shoe_tests {
         // shoe_vec layout: [Cut, Ks, 2s, As] - 2s is burned, Ks is next.
         let cards = shoe_vec(CardInt::CardAs, &[CardInt::CardKs, CardInt::Card2s]);
         let mut shoe = BaccaratShoe::from(cards);
-        assert_eq!(shoe.pull(), (CardInt::CardKs, false));
+        assert_eq!(shoe.deal(), (CardInt::CardKs, false));
     }
 
     #[test]
@@ -771,7 +771,7 @@ mod baccarat_shoe_tests {
         ];
         let cards = shoe_vec(CardInt::CardKs, &rest);
         let mut shoe = BaccaratShoe::from(cards);
-        assert_eq!(shoe.pull(), (CardInt::CardAs, false));
+        assert_eq!(shoe.deal(), (CardInt::CardAs, false));
     }
 
     #[test]
@@ -831,7 +831,7 @@ mod baccarat_shoe_tests {
     // from_shoe: deal As (cursor -> L-2), burn(1) (cursor -> L-3).
     // has_reached_cut_card() = (cursor <= cut_pos) = (L-3 <= L-3) = true.
     // next() call 1: sees has_reached_cut_card()=true -> sets is_exhausted=true,
-    //   skips the Cut via pull's loop, deals all play cards, returns Some.
+    //   skips the Cut via deal's loop, deals all play cards, returns Some.
     // next() call 2: is_exhausted=true -> returns None.
 
     #[test]
@@ -961,19 +961,19 @@ mod baccarat_shoe_tests {
         // from_shoe: deal As (cursor->10), burn(1) (cursor->9). 9>7 -> not exhausted yet.
         //
         // Round 1 next(): has_reached_cut_card()=false (9>7).
-        //   pull p1 : deals cards[9]=Card9s              cursor->8
-        //   pull b1 : deals cards[8]=Card5h              cursor->7
-        //   pull p2 : deals cards[7]=Card::Cut -> skip;   cursor->6
-        //             deals cards[6]=CardKs               cursor->5  -> p2=CardKs
-        //   pull b2 : deals cards[5]=Card2d              cursor->4
+        //   deal p1 : deals cards[9]=Card9s              cursor->8
+        //   deal b1 : deals cards[8]=Card5h              cursor->7
+        //   deal p2 : deals cards[7]=Card::Cut -> skip;  cursor->6
+        //             deals cards[6]=CardKs              cursor->5  -> p2=CardKs
+        //   deal b2 : deals cards[5]=Card2d              cursor->4
         //   player=[Card9s,CardKs] value=9 (natural) -> no thirds.
         //   Returns Some(round1). After return: cursor=4 <= cut_pos=7 -> exhausted on next check.
         //
         // Round 2 next(): has_reached_cut_card()=true (4<=7) -> is_exhausted=true.
-        //   pull p1 : cards[4]=Card2h  cursor->3
-        //   pull b1 : cards[3]=Card9c  cursor->2
-        //   pull p2 : cards[2]=Card5c  cursor->1
-        //   pull b2 : cards[1]=CardKd  cursor->0
+        //   deal p1 : cards[4]=Card2h  cursor->3
+        //   deal b1 : cards[3]=Card9c  cursor->2
+        //   deal p2 : cards[2]=Card5c  cursor->1
+        //   deal b2 : cards[1]=CardKd  cursor->0
         //   player=[Card2h,Card5c] value=7, banker=[Card9c,CardKd] value=9 (natural) -> no thirds.
         //   Returns Some(round2).
         //
@@ -986,7 +986,7 @@ mod baccarat_shoe_tests {
             Card::Play(CardInt::Card2h), // round 2 player card 1
             Card::Play(CardInt::Card2d), // round 1 banker card 2
             Card::Play(CardInt::CardKs), // round 1 player card 2
-            Card::Cut,                   // cut card - encountered during round 1's p2 pull
+            Card::Cut,                   // cut card - encountered during round 1's p2 deal
             Card::Play(CardInt::Card5h), // round 1 banker card 1
             Card::Play(CardInt::Card9s), // round 1 player card 1
             Card::Play(CardInt::Card3c), // burn card
