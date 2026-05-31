@@ -46,6 +46,7 @@
 //! }
 //! ```
 
+use arrayvec::ArrayVec;
 use kev::{CardInt, Rank};
 use num_bigint::BigUint;
 use num_traits::cast::ToPrimitive;
@@ -77,7 +78,7 @@ fn pip_value(card: CardInt) -> u8 {
 /// A baccarat hand holding the cards dealt to one side (player or banker).
 #[derive(Default)]
 pub struct BaccaratHand {
-    cards: Vec<CardInt>,
+    cards: ArrayVec<CardInt, 3>,
 }
 
 impl BaccaratHand {
@@ -115,7 +116,7 @@ impl BaccaratHand {
     /// Returns a slice of the cards held in this hand.
     #[must_use]
     pub fn cards(&self) -> &[CardInt] {
-        self.cards.as_slice()
+        &self.cards
     }
 }
 
