@@ -78,22 +78,18 @@ All five scoreboards are stored as `BigUint` shift-registers:
 
 ```rust
 use bacc::{BaccaratScoreboard, BaccaratShoe};
-use bacc::{write_outcome, write_bead_plate, write_big_road, write_derived_roads};
 
 let mut sb = BaccaratScoreboard::new();
 let shoe = BaccaratShoe::new(8, 3, 0.965); // 8 decks, 3 shuffle passes, 96.5% penetration
 for round in shoe {
     sb.update(&round);
-    write_outcome(&round, &mut std::io::stdout()).unwrap();
-    write_bead_plate(sb.bead_plate(), &mut std::io::stdout()).unwrap();
-    write_big_road(sb.big_road(), &mut std::io::stdout()).unwrap();
-    write_derived_roads(sb.derived_roads(), &mut std::io::stdout()).unwrap();
+    println!("{}", sb.bead_plate());
+    println!("{}", sb.big_road());
+    for road in sb.derived_roads() {
+        println!("{}", road);
+    }
 }
 ```
-
-Free functions for writing each scoreboard to any `std::io::Write` sink:
-`write_outcome`, `write_bead_plate`, `write_big_road`,
-`write_derived_roads`.
 
 ## License
 
