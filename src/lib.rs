@@ -400,9 +400,9 @@ pub struct BaccaratScoreboard {
     //   ...          - earlier rows; previous columns are packed above
     big_road: BigUint,
     // [Big Eye Boy, Small Road, Cockroach Pig] - one run-length-encoded shift-register each.
+    // Bytes in chronological order (oldest at index 0, newest at the end).
     // Each byte: bits 7-1 = run length, bit 0 = icon (1 = red, 0 = blue).
-    // Matching icon: byte incremented by 2 (run length in bits 7-1 incremented by 1). New icon: fresh byte pushed onto the low end.
-    derived_roads: [BigUint; 3],
+    derived_roads: [Vec<u8>; 3],
 }
 
 impl BaccaratScoreboard {
@@ -427,7 +427,9 @@ impl BaccaratScoreboard {
     pub fn clear(&mut self) {
         self.bead_plate.clear();
         self.big_road = BigUint::ZERO;
-        self.derived_roads = [BigUint::ZERO, BigUint::ZERO, BigUint::ZERO];
+        for road in &mut self.derived_roads {
+            road.clear();
+        }
     }
 
     /// Returns the bead plate as a shift-register of bead bytes, newest at bits 0-7.
@@ -445,8 +447,10 @@ impl BaccaratScoreboard {
     /// Returns the three derived roads - Big Eye Boy, Small Road, and Cockroach Pig - as
     /// run-length-encoded shift-registers, one per element.
     #[must_use]
-    pub fn derived_roads(&self) -> &[BigUint; 3] {
-        &self.derived_roads
+    pub fn derived_roads(&self) -> [BigUint; 3] {
+        self.derived_roads
+            .each_ref()
+            .map(|r| BigUint::from_bytes_be(r))
     }
 
     /// Converts a round's packed encoding into a single bead byte.
@@ -539,15 +543,14 @@ impl BaccaratScoreboard {
     /// a new icon pushes a fresh byte onto the low end.
     fn push_derived_road_icon(&mut self, road_idx: usize, icon: u8) {
         let road = &mut self.derived_roads[road_idx];
-        if road.is_zero() {
-            *road = BigUint::from(2u8) | BigUint::from(icon);
+        if road.is_empty() {
+            road.push(2 | icon);
         } else {
-            let last_icon = (&*road & BigUint::one()).to_u8().unwrap();
+            let last_icon = road.last().unwrap() & 1;
             if icon == last_icon {
-                *road += BigUint::from(2u8);
+                *road.last_mut().unwrap() += 2;
             } else {
-                *road <<= 8;
-                *road |= BigUint::from(2u8) | BigUint::from(icon);
+                road.push(2 | icon);
             }
         }
     }
@@ -1553,7 +1556,7 @@ mod baccarat_scoreboard_tests {
                 .expect("valid big_road hex")
         );
         assert_eq!(
-            *sb.derived_roads(),
+            sb.derived_roads(),
             [
                 BigUint::parse_bytes(b"030605", 16).expect("valid big_eye_boy hex"),
                 BigUint::parse_bytes(b"0403", 16).expect("valid small_road hex"),
@@ -1564,7 +1567,7 @@ mod baccarat_scoreboard_tests {
         assert_eq!(sb.bead_plate(), BigUint::ZERO);
         assert_eq!(*sb.big_road(), BigUint::ZERO);
         assert_eq!(
-            *sb.derived_roads(),
+            sb.derived_roads(),
             [BigUint::ZERO, BigUint::ZERO, BigUint::ZERO]
         );
     }
