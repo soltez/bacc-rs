@@ -49,8 +49,6 @@
 use arrayvec::ArrayVec;
 use kev::{CardInt, Rank};
 use num_bigint::BigUint;
-use num_traits::cast::ToPrimitive;
-use num_traits::{One, Zero};
 use shoe::{Card, Shoe};
 
 /// Returns the pip value of a single [`CardInt`].
@@ -392,13 +390,18 @@ pub struct BaccaratScoreboard {
     // Bead bytes in chronological order (oldest at index 0, newest at the end).
     // Each byte: bits 7-4 = winner's hand value, bits 3-2 = pair flags, bits 1-0 = outcome.
     bead_plate: Vec<u8>,
-    // Variable-width column shift-register. Each column occupies (1 + 2n) bytes (n = row count),
-    // packed at the low end:
-    //   byte 0       - row_count n
-    //   bytes 1-2    - bead + tie_count of the most recent row
-    //   bytes 3-4    - bead + tie_count of the row before that
-    //   ...          - earlier rows; previous columns are packed above
-    big_road: BigUint,
+    // Columns in chronological order (oldest at index 0, newest at the end).
+    // Each column occupies (1 + 2n) bytes (n = row count):
+    //   byte 0     - tie_count of the oldest row
+    //   byte 1     - bead of the oldest row
+    //   ...        - newer rows follow in the same pattern
+    //   byte 2n-2  - tie_count of the most recent row
+    //   byte 2n-1  - bead of the most recent row
+    //   byte 2n    - row_count n
+    // BigUint::from_bytes_be(&big_road) reproduces the shift-register unchanged.
+    big_road: Vec<u8>,
+    // Row counts of the five most recent columns (index 0 = current). Updated O(1) per round.
+    col_heights: [u8; 5],
     // [Big Eye Boy, Small Road, Cockroach Pig] - one run-length-encoded shift-register each.
     // Bytes in chronological order (oldest at index 0, newest at the end).
     // Each byte: bits 7-1 = run length, bit 0 = icon (1 = red, 0 = blue).
@@ -426,7 +429,8 @@ impl BaccaratScoreboard {
     /// Resets all five scoreboards to zero.
     pub fn clear(&mut self) {
         self.bead_plate.clear();
-        self.big_road = BigUint::ZERO;
+        self.big_road.clear();
+        self.col_heights = [0; 5];
         for road in &mut self.derived_roads {
             road.clear();
         }
@@ -440,8 +444,8 @@ impl BaccaratScoreboard {
 
     /// Returns the big road as a variable-width column shift-register, newest column at the low end.
     #[must_use]
-    pub fn big_road(&self) -> &BigUint {
-        &self.big_road
+    pub fn big_road(&self) -> BigUint {
+        BigUint::from_bytes_be(&self.big_road)
     }
 
     /// Returns the three derived roads - Big Eye Boy, Small Road, and Cockroach Pig - as
@@ -480,60 +484,47 @@ impl BaccaratScoreboard {
 
     /// Advances the big road by one round.
     ///
-    /// Five transitions driven by `big_road` state and `last_outcome` (bits 8-9 of `big_road`):
-    /// - **Initial round** (`big_road` is zero) - write first bead and set `row_count` to 1.
-    /// - **Tie** - increment the tie counter at bits 16-23; column unchanged.
-    /// - **Opening ties resolved** - preserve tie count and add 1 (recovering the count missed
-    ///   by the initial-round path), write first real bead, reset `row_count` to 1.
+    /// Five transitions driven by `big_road` state and `last_outcome` (`vec[len-2] & 0x3`):
+    /// - **Initial round** (`big_road` is empty) - write first bead and set `row_count` to 1.
+    /// - **Tie** - increment the tie counter at `vec[len-3]`; column unchanged.
+    /// - **Opening ties resolved** - preserve tie count, write first real bead, reset `row_count` to 1.
     /// - **Column hit** (same side wins) - grow current column by one row.
     /// - **New column** (opposite side wins) - archive current column, start a fresh one.
     fn update_big_road(&mut self, bead: u8, is_tie: bool) {
-        let bead_shl: BigUint = BigUint::from(bead) << 8;
-        if self.big_road.is_zero() {
+        if self.big_road.is_empty() {
             if is_tie {
-                self.big_road = bead_shl + BigUint::from(0x1_0000_u32);
+                self.big_road = vec![1, bead, 0];
+                // col_heights stays [0;5]: row_count 0 signals no real row yet
             } else {
-                self.big_road = bead_shl | BigUint::one();
+                self.big_road = vec![0, bead, 1];
+                self.col_heights = [1, 0, 0, 0, 0];
             }
             return;
         }
-        // Outcome bits of the current column's topmost row sit at bits 8-9.
-        let last_outcome: u8 = ((&self.big_road & BigUint::from(0x300u16)) >> 8u8)
-            .to_u8()
-            .unwrap();
-        let is_shoe_tie_start: bool = last_outcome == 0x3;
-        let is_column_hit: bool = last_outcome == (bead & 0x3);
+        // Outcome bits of the current column's topmost row sit at vec[len-2] bits 0-1.
+        let len = self.big_road.len();
+        let last_outcome = self.big_road[len - 2] & 0x3;
+        let is_shoe_tie_start = last_outcome == 0x3;
+        let is_column_hit = last_outcome == (bead & 0x3);
         if is_tie {
-            self.big_road += BigUint::from(0x1_0000u32);
+            self.big_road[len - 3] = self.big_road[len - 3].wrapping_add(1);
+            // col_heights unchanged: ties do not add rows
         } else if is_shoe_tie_start {
             // TODO: verify against the baccarat scoreboard spec that discarding the column
             // history here is correct for a shoe that opens with one or more consecutive ties.
-            let tie_cnt = &self.big_road & BigUint::from(0xFF_0000_u32);
-            self.big_road = tie_cnt | bead_shl | BigUint::one();
+            self.big_road[len - 2] = bead;
+            self.big_road[len - 1] = 1;
+            self.col_heights[0] = 1;
         } else if is_column_hit {
-            // Remove stale row_count byte (>> 8), shift existing rows up 24 bits, insert new row.
-            let row_cnt = (&self.big_road & BigUint::from(0xFFu8)) + BigUint::one();
-            self.big_road >>= 8;
-            self.big_road <<= 24;
-            self.big_road |= bead_shl | row_cnt;
+            // Column hit: pop row_count, append new row, push updated row_count.
+            let row_cnt = self.big_road.pop().expect("big_road is non-empty");
+            self.big_road.extend_from_slice(&[0, bead, row_cnt + 1]);
+            self.col_heights[0] += 1;
         } else {
-            self.big_road <<= 24;
-            self.big_road |= bead_shl | BigUint::one();
+            self.big_road.extend_from_slice(&[0, bead, 1]);
+            self.col_heights.copy_within(0..4, 1);
+            self.col_heights[0] = 1;
         }
-    }
-
-    /// Walks the variable-width big-road encoding and returns the row count of the five
-    /// most recent columns (index 0 = current column, 1 = one column back, ...).
-    ///
-    /// A column of height `n` occupies `2n + 1` bytes, so the bit-skip is `8 * (2n + 1)`.
-    fn col_heights(&self) -> [u8; 5] {
-        let mut heights = [0u8; 5];
-        let mut temp = self.big_road.clone();
-        for slot in &mut heights {
-            *slot = (&temp & BigUint::from(0xFFu8)).to_u8().unwrap();
-            temp >>= 8 * (2 * usize::from(*slot) + 1);
-        }
-        heights
     }
 
     /// Pushes one run-length-encoded icon onto `derived_roads[road_idx]`.
@@ -563,21 +554,20 @@ impl BaccaratScoreboard {
     ///
     /// [`push_derived_road_icon`]: Self::push_derived_road_icon
     fn update_derived_roads(&mut self) {
-        let col = self.col_heights();
         for i in 1..=3usize {
             // Need a reference column (i+1 back) or a growing current column with a comparison
             // column (i back) to produce a meaningful icon.
-            let has_ref_col = col[i + 1] > 0;
-            let has_growing_col = col[i] > 0 && col[0] > 1;
+            let has_ref_col = self.col_heights[i + 1] > 0;
+            let has_growing_col = self.col_heights[i] > 0 && self.col_heights[0] > 1;
             if !(has_ref_col || has_growing_col) {
                 continue;
             }
             // New column (height 1): red if adjacent reference columns are equal in height.
             // Growing column: red if current height does not trail column i by exactly one.
-            let icon: u8 = if col[0] == 1 {
-                u8::from(col[i] == col[i + 1])
+            let icon: u8 = if self.col_heights[0] == 1 {
+                u8::from(self.col_heights[i] == self.col_heights[i + 1])
             } else {
-                u8::from(col[0] != col[i] + 1)
+                u8::from(self.col_heights[0] != self.col_heights[i] + 1)
             };
             self.push_derived_road_icon(i - 1, icon);
         }
@@ -1534,7 +1524,7 @@ mod baccarat_scoreboard_tests {
         }
         // bead_plate = (round1_bead << 8) | round2_bead = (0x93 << 8) | 0x62 = 0x9362 = 37730.
         assert_eq!(sb.bead_plate(), BigUint::from(37730u32));
-        assert_eq!(*sb.big_road(), BigUint::from(90625u32));
+        assert_eq!(sb.big_road(), BigUint::from(90625u32));
         for _ in 0..8 {
             let round = shoe.next().expect("round should be dealt");
             sb.update(&round);
@@ -1551,7 +1541,7 @@ mod baccarat_scoreboard_tests {
             BigUint::parse_bytes(b"936292937381619182917271", 16).expect("valid bead_plate hex")
         );
         assert_eq!(
-            *sb.big_road(),
+            sb.big_road(),
             BigUint::parse_bytes(b"016202920200810061009103008201009101007201007101", 16)
                 .expect("valid big_road hex")
         );
@@ -1565,7 +1555,7 @@ mod baccarat_scoreboard_tests {
         );
         sb.clear();
         assert_eq!(sb.bead_plate(), BigUint::ZERO);
-        assert_eq!(*sb.big_road(), BigUint::ZERO);
+        assert_eq!(sb.big_road(), BigUint::ZERO);
         assert_eq!(
             sb.derived_roads(),
             [BigUint::ZERO, BigUint::ZERO, BigUint::ZERO]
