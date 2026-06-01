@@ -36,7 +36,6 @@ dependencies = [
  "arrayvec",
  "kev-rs",
  "num-bigint",
- "num-traits",
  "rstest",
  "shoe-rs",
 ]
