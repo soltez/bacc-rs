@@ -20,9 +20,9 @@
 //! All five scoreboards are stored as [`BigUint`] shift-registers. Call
 //! [`BaccaratScoreboard::update`] after each round to advance them:
 //!
-//! - **Bead plate** ([`BaccaratScoreboard::bead_plate`]) - one byte per round,
-//!   newest at bits 0-7. Each byte encodes the winner's hand value, pair flags,
-//!   and outcome.
+//! - **Bead plate** ([`BaccaratScoreboard::bead_plate`]) - two bytes per round,
+//!   newest at bits 0-15. Each word encodes the winner's hand value, third card
+//!   flags, pair flags, and outcome.
 //! - **Big road** ([`BaccaratScoreboard::big_road`]) - variable-width column
 //!   shift-register. Each column occupies `2n + 1` bytes where `n` is the row
 //!   count; newest column at the low end.
@@ -387,16 +387,17 @@ impl Iterator for BaccaratShoe {
 /// [`update`]: BaccaratScoreboard::update
 #[derive(Default)]
 pub struct BaccaratScoreboard {
-    // Bead bytes in chronological order (oldest at index 0, newest at the end).
-    // Each byte: bits 7-4 = winner's hand value, bits 3-2 = pair flags, bits 1-0 = outcome.
+    // Bead words in chronological order (oldest at index 0, newest at the end).
+    // Each word is two bytes: bits 11-8 = winner's hand value, bits 5-4 = third card flags,
+    // bits 3-2 = pair flags, bits 1-0 = outcome.
     bead_plate: Vec<u8>,
     // Columns in chronological order (oldest at index 0, newest at the end).
     // Each column occupies (1 + 2n) bytes (n = row count):
-    //   byte 0     - tie_count of the oldest row
-    //   byte 1     - bead of the oldest row
+    //   byte 0     - ttttvvvv of the oldest row (bits 7-4 = tie count, bits 3-0 = hand value)
+    //   byte 1     - xx33ppww of the oldest row (third card flags, pair flags, outcome)
     //   ...        - newer rows follow in the same pattern
-    //   byte 2n-2  - tie_count of the most recent row
-    //   byte 2n-1  - bead of the most recent row
+    //   byte 2n-2  - ttttvvvv of the most recent row
+    //   byte 2n-1  - xx33ppww of the most recent row
     //   byte 2n    - row_count n
     // BigUint::from_bytes_be(&big_road) reproduces the shift-register unchanged.
     big_road: Vec<u8>,
@@ -417,7 +418,7 @@ impl BaccaratScoreboard {
 
     /// Updates all five scoreboards immediately after a completed round.
     pub fn update(&mut self, round: &BaccaratRound) {
-        let bead = Self::bead_byte(round.encode());
+        let bead = Self::bead_word(round.encode());
         let is_tie = bead & 0x3 == 0x3;
         self.update_bead_plate(bead);
         self.update_big_road(bead, is_tie);
@@ -436,7 +437,7 @@ impl BaccaratScoreboard {
         }
     }
 
-    /// Returns the bead plate as a shift-register of bead bytes, newest at bits 0-7.
+    /// Returns the bead plate as a shift-register of bead words, newest at bits 0-15.
     #[must_use]
     pub fn bead_plate(&self) -> BigUint {
         BigUint::from_bytes_be(&self.bead_plate)
@@ -457,46 +458,50 @@ impl BaccaratScoreboard {
             .map(|r| BigUint::from_bytes_be(r))
     }
 
-    /// Converts a round's packed encoding into a single bead byte.
+    /// Converts a round's packed encoding into a two-byte bead word for the bead plate.
     ///
-    /// | Bits | Content |
-    /// |------|---------|
-    /// | 7-4  | Winner's hand value (0-9) |
-    /// | 3    | Banker pair flag |
-    /// | 2    | Player pair flag |
-    /// | 1-0  | Outcome (`1` = player, `2` = banker, `3` = tie) |
+    /// | Bits  | Content |
+    /// |-------|---------|
+    /// | 15-12 | Unused (0) |
+    /// | 11-8  | Winner's hand value (0-9) |
+    /// | 7-6   | Unused (0) |
+    /// | 5-4   | Third card flags (`01` = player, `10` = banker, `11` = both) |
+    /// | 3-2   | Pair flags (`01` = player, `10` = banker, `11` = both) |
+    /// | 1-0   | Outcome (`1` = player, `2` = banker, `3` = tie) |
     ///
-    /// Banker wins use the banker's hand value in the high nibble (bits 12-15 of the packed value);
-    /// player wins and ties use the player's hand value (bits 8-11 of the packed value).
-    fn bead_byte(packed: u32) -> u8 {
-        let low_nib: u8 = (packed & 0xF) as u8;
-        let n: u8 = match low_nib & 0x3 {
-            2 => 8,
-            _ => 4,
+    /// Banker wins use the banker's hand value (bits 15-12 of the packed value);
+    /// player wins and ties use the player's hand value (bits 11-8 of the packed value).
+    fn bead_word(packed: u32) -> u16 {
+        let low_byte = (packed & 0xFF) as u16;
+        let val = if packed & 0x3 == 2 {
+            packed >> 4
+        } else {
+            packed
         };
-        low_nib | (packed >> n & 0xF0) as u8
+        low_byte | (val & 0xF00) as u16
     }
 
-    /// Appends `bead` to the bead-plate byte buffer.
-    fn update_bead_plate(&mut self, bead: u8) {
-        self.bead_plate.push(bead);
+    /// Appends `bead_word` to the bead-plate byte buffer.
+    fn update_bead_plate(&mut self, bead: u16) {
+        self.bead_plate.extend_from_slice(&bead.to_be_bytes());
     }
 
     /// Advances the big road by one round.
     ///
     /// Five transitions driven by `big_road` state and `last_outcome` (`vec[len-2] & 0x3`):
     /// - **Initial round** (`big_road` is empty) - write first bead and set `row_count` to 1.
-    /// - **Tie** - increment the tie counter at `vec[len-3]`; column unchanged.
+    /// - **Tie** - increment the tie counter nibble at `vec[len-3]`; column unchanged.
     /// - **Opening ties resolved** - preserve tie count, write first real bead, reset `row_count` to 1.
     /// - **Column hit** (same side wins) - grow current column by one row.
     /// - **New column** (opposite side wins) - archive current column, start a fresh one.
-    fn update_big_road(&mut self, bead: u8, is_tie: bool) {
+    fn update_big_road(&mut self, bead: u16, is_tie: bool) {
+        let [val, out] = bead.to_be_bytes();
         if self.big_road.is_empty() {
             if is_tie {
-                self.big_road = vec![1, bead, 0];
+                self.big_road = vec![0x10, out, 0];
                 // col_heights stays [0;5]: row_count 0 signals no real row yet
             } else {
-                self.big_road = vec![0, bead, 1];
+                self.big_road = vec![val, out, 1];
                 self.col_heights = [1, 0, 0, 0, 0];
             }
             return;
@@ -505,23 +510,26 @@ impl BaccaratScoreboard {
         let len = self.big_road.len();
         let last_outcome = self.big_road[len - 2] & 0x3;
         let is_shoe_tie_start = last_outcome == 0x3;
-        let is_column_hit = last_outcome == (bead & 0x3);
+        let is_column_hit = last_outcome == (out & 0x3);
         if is_tie {
-            self.big_road[len - 3] = self.big_road[len - 3].wrapping_add(1);
+            // Increment tie count in the high nibble of vec[len-3], saturating at 0xF0.
+            let b = self.big_road[len - 3];
+            self.big_road[len - 3] = if b < 0xF0 { b + 0x10 } else { b };
             // col_heights unchanged: ties do not add rows
         } else if is_shoe_tie_start {
             // TODO: verify against the baccarat scoreboard spec that discarding the column
             // history here is correct for a shoe that opens with one or more consecutive ties.
-            self.big_road[len - 2] = bead;
+            self.big_road[len - 3] |= val;
+            self.big_road[len - 2] = out;
             self.big_road[len - 1] = 1;
             self.col_heights[0] = 1;
         } else if is_column_hit {
             // Column hit: pop row_count, append new row, push updated row_count.
             let row_cnt = self.big_road.pop().expect("big_road is non-empty");
-            self.big_road.extend_from_slice(&[0, bead, row_cnt + 1]);
+            self.big_road.extend_from_slice(&[val, out, row_cnt + 1]);
             self.col_heights[0] += 1;
         } else {
-            self.big_road.extend_from_slice(&[0, bead, 1]);
+            self.big_road.extend_from_slice(&[val, out, 1]);
             self.col_heights.copy_within(0..4, 1);
             self.col_heights[0] = 1;
         }
@@ -1432,18 +1440,18 @@ mod baccarat_scoreboard_tests {
     #[test]
     fn all_scoreboards_accumulate_correctly_over_12_rounds() {
         // first_card = As (pip=1, burns 1 card: Card2h).
-        // Round  1: P=[9d, Qh]     value=9 natural, B=[9c, Ts]     value=9 natural -> tie,         bead=0x93.
-        // Round  2: P=[3c, Kd, 8c] value=1,         B=[6s, Jh]     value=6         -> banker wins, bead=0x62.
-        // Round  3: P=[5d, 7c]     value=2,         B=[9h, Tc]     value=9 natural -> banker wins, bead=0x92.
-        // Round  4: P=[Qs, 9d]     value=9 natural, B=[4s, 5s]     value=9 natural -> tie,         bead=0x93.
-        // Round  5: P=[Ac, 6s]     value=7,         B=[7h, Kc]     value=7         -> tie,         bead=0x73.
-        // Round  6: P=[Ah, 7s]     value=8 natural, B=[Ad, 6c]     value=7         -> player wins, bead=0x81.
-        // Round  7: P=[6h, Qd]     value=6,         B=[2c, Kh, Ts] value=2         -> player wins, bead=0x61.
-        // Round  8: P=[Ks, 9c]     value=9 natural, B=[8h, 7d]     value=5         -> player wins, bead=0x91.
-        // Round  9: P=[9s, 2d]     value=1,         B=[8s, Tc]     value=8 natural -> banker wins, bead=0x82.
-        // Round 10: P=[9h, Jd]     value=9 natural, B=[4d, 6d]     value=0         -> player wins, bead=0x91.
-        // Round 11: P=[3s, Th, Js] value=3,         B=[9s, 8d]     value=7         -> banker wins, bead=0x72.
-        // Round 12: P=[4h, Qc, 3h] value=7,         B=[Td, 3d, 2s] value=5         -> player wins, bead=0x71.
+        // Round  1: P=[9d, Qh]     value=9 natural, B=[9c, Ts]     value=9 natural -> tie,         bead_word=0x0903.
+        // Round  2: P=[3c, Kd, 8c] value=1,         B=[6s, Jh]     value=6         -> banker wins, bead_word=0x0612.
+        // Round  3: P=[5d, 7c]     value=2,         B=[9h, Tc]     value=9 natural -> banker wins, bead_word=0x0902.
+        // Round  4: P=[Qs, 9d]     value=9 natural, B=[4s, 5s]     value=9 natural -> tie,         bead_word=0x0903.
+        // Round  5: P=[Ac, 6s]     value=7,         B=[7h, Kc]     value=7         -> tie,         bead_word=0x0703.
+        // Round  6: P=[Ah, 7s]     value=8 natural, B=[Ad, 6c]     value=7         -> player wins, bead_word=0x0801.
+        // Round  7: P=[6h, Qd]     value=6,         B=[2c, Kh, Ts] value=2         -> player wins, bead_word=0x0621.
+        // Round  8: P=[Ks, 9c]     value=9 natural, B=[8h, 7d]     value=5         -> player wins, bead_word=0x0901.
+        // Round  9: P=[9s, 2d]     value=1,         B=[8s, Tc]     value=8 natural -> banker wins, bead_word=0x0802.
+        // Round 10: P=[9h, Jd]     value=9 natural, B=[4d, 6d]     value=0         -> player wins, bead_word=0x0901.
+        // Round 11: P=[3s, Th, Js] value=3,         B=[9s, 8d]     value=7         -> banker wins, bead_word=0x0712.
+        // Round 12: P=[4h, Qc, 3h] value=7,         B=[Td, 3d, 2s] value=5         -> player wins, bead_word=0x0731.
         let cards = vec![
             Card::Play(CardInt::CardJc), // dummy - never dealt (cards[0])
             // round 12 cards
@@ -1522,9 +1530,9 @@ mod baccarat_scoreboard_tests {
             sb.update(&round);
             assert_eq!(round.cut_card_index(), None);
         }
-        // bead_plate = (round1_bead << 8) | round2_bead = (0x93 << 8) | 0x62 = 0x9362 = 37730.
-        assert_eq!(sb.bead_plate(), BigUint::from(37730u32));
-        assert_eq!(sb.big_road(), BigUint::from(90625u32));
+        // bead_plate = (round1_word << 16) | round2_word = (0x0903 << 16) | 0x0612 = 0x09030612.
+        assert_eq!(sb.bead_plate(), BigUint::from(0x09030612u32));
+        assert_eq!(sb.big_road(), BigUint::from(0x161201u32));
         for _ in 0..8 {
             let round = shoe.next().expect("round should be dealt");
             sb.update(&round);
@@ -1538,11 +1546,12 @@ mod baccarat_scoreboard_tests {
         assert_eq!(round12.cut_card_index(), None);
         assert_eq!(
             sb.bead_plate(),
-            BigUint::parse_bytes(b"936292937381619182917271", 16).expect("valid bead_plate hex")
+            BigUint::parse_bytes(b"090306120902090307030801062109010802090107120731", 16)
+                .expect("valid bead_plate hex")
         );
         assert_eq!(
             sb.big_road(),
-            BigUint::parse_bytes(b"016202920200810061009103008201009101007201007101", 16)
+            BigUint::parse_bytes(b"161229020208010621090103080201090101071201073101", 16)
                 .expect("valid big_road hex")
         );
         assert_eq!(
