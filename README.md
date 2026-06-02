@@ -35,22 +35,23 @@ arbitrary-precision integers.
 
 All five scoreboards are stored as `BigUint` shift-registers:
 
-- **Bead plate** - one byte per round, newest at bits 0-7.
+- **Bead plate** - two bytes per round, newest at bits 0-15.
 ```
-+--------+--------+--------+--------+
-|vvvvppww|vvvvppww|vvvvppww|vvvvppww|
-+--------+--------+--------+--------+
-|<-col1->|<-col2->|  ...   |<-coln->|
++--------+--------+--------+--------+-----+--------+--------+
+|xxxxvvvv|xx33ppww|xxxxvvvv|xx33ppww| ... |xxxxvvvv|xx33ppww|
++--------+--------+--------+--------+-----+--------+--------+
+|<---  col 1  --->|<---  col 2  --->| ... |<---  col n  --->|
 
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
+# 33 = third card flag (00=none, 01=player, 10=banker, 11=both)
 # vvvv = winning hand value (0~9)
 ```
 - **Big road** - variable-width column shift-register, newest column at
   the low end.
 ```
 +--------+--------+-----+--------+--------+--------+-----+--------+--------+-----+--------+--------+--------+--------+--------+
-|-ttttttt|vvvvppww| ... |-ttttttt|vvvvppww|-rrrrrrr| ... |-ttttttt|vvvvppww| ... |-ttttttt|vvvvppww|-ttttttt|vvvvppww|-rrrrrrr|
+|ttttvvvv|xx33ppww| ... |ttttvvvv|xx33ppww|-rrrrrrr| ... |ttttvvvv|xx33ppww| ... |ttttvvvv|xx33ppww|ttttvvvv|xx33ppww|-rrrrrrr|
 +--------+--------+-----+--------+--------+--------+-----+--------+--------+-----+--------+--------+--------+--------+--------+
 |<---   row 1  -->| ... |<---   row j  -->|        | ... |<--   row 1   -->| ... |<--  row i-1  -->|<---   row i  -->|
 |<---                   col 1                   -->| ... |<--                            col n                             -->|
@@ -58,8 +59,9 @@ All five scoreboards are stored as `BigUint` shift-registers:
 # rrrrrrr = row count (0~127)
 # ww = outcome (01=player, 10=banker, 11=tie)
 # pp = pair flag (00=none, 01=player, 10=banker, 11=both)
+# 33 = third card flag (00=none, 01=player, 10=banker, 11=both)
 # vvvv = winning hand value (0~9)
-# ttttttt = tie count (0~127)
+# tttt = tie count (0~15)
 ```
 
 - **Derived roads** - Big Eye Boy, Small Road, and Cockroach Pig, each
