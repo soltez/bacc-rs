@@ -1,3 +1,4 @@
+#![no_std]
 //! Baccarat shoe-dealer layer.
 //!
 //! `bacc` wraps `shoe::Shoe` with baccarat dealing rules and exposes rounds
@@ -191,11 +192,16 @@ impl Iterator for BaccShoe {
 }
 
 #[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
 mod baccarat_shoe_tests {
     use super::BaccShoe;
     use kev::CardInt;
     use rstest::rstest;
     use shoe::{Card, Shoe};
+    use std::vec;
+    use std::vec::Vec;
 
     fn hand(cards: &[CardInt]) -> super::BaccHand {
         let mut h = super::BaccHand::default();

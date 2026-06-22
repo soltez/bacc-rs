@@ -1,8 +1,8 @@
 # bacc-rs
 
-A shoe-dealer layer for baccarat. Wraps `shoe-rs` with baccarat
-dealing rules and exposes rounds via the `Iterator` trait. Round
-types and scoreboard tracking are provided by `bacc-core-rs`.
+A `no_std` shoe-dealer layer for baccarat. Wraps `shoe-rs` with
+baccarat dealing rules and exposes rounds via the `Iterator` trait.
+Round types and scoreboard tracking are provided by `bacc-core-rs`.
 
 ## Core types
 
@@ -85,6 +85,8 @@ All five scoreboards are stored as compact byte sequences:
 ```
 
 ## Usage
+
+The example below uses `Vec` and requires an allocator (`alloc`).
 
 ```rust
 use bacc::BaccShoe;
