@@ -12,10 +12,9 @@ categories = ["games"]
 name = "bacc"
 
 [dependencies]
-arrayvec = "0.7.6"
-kev-rs = "0.1.2"
-num-bigint = "0.4.6"
-shoe-rs = "0.1.1"
+bacc-core-rs = "0.2"
+kev-rs = "0.2"
+shoe-rs = "0.2"
 
 [dev-dependencies]
 rstest = "0.23"
