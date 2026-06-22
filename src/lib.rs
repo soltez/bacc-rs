@@ -1,40 +1,20 @@
-//! Baccarat engine library.
+//! Baccarat shoe-dealer layer.
 //!
-//! `bacc` deals baccarat rounds from a multi-deck shoe and maintains the five
-//! standard scoreboards as compact byte sequences.
+//! `bacc` wraps `shoe::Shoe` with baccarat dealing rules and exposes rounds
+//! via the [`Iterator`] trait. Round types and scoreboard tracking are
+//! provided by `bacc_core`.
 //!
-//! # Core types
+//! # Core type
 //!
-//! - [`BaccShoe`] - wraps `shoe::Shoe` with baccarat dealing rules. Implements
-//!   [`Iterator`]`<Item = `[`BaccRound`]`>` so rounds can be consumed with
-//!   a plain `for` loop.
-//! - [`BaccScoreboard`] - tracks the five scoreboards.
-//! - [`BaccRound`] - the resolved outcome of one round. Exposes the player
-//!   and banker card slices, a compact [`BaccRound::encode`] encoding of the
-//!   full card sequence and metadata, and a [`BaccRound::describe`] TOML
-//!   fragment for human-readable output.
-//! - [`BaccHand`] - the cards dealt to one side, with hand value calculation,
-//!   pair detection, and third-card flag.
-//!
-//! # Scoreboards
-//!
-//! All five scoreboards are stored as byte sequences. Call
-//! [`BaccScoreboard::update`] after each round to advance them:
-//!
-//! - **Serialization** ([`BaccScoreboard::encode`] / [`BaccScoreboard::decode`]) -
-//!   encodes the full scoreboard state as a hex string of bead words, sufficient
-//!   to reconstruct all five roads.
-//! - **Bead plate** ([`BaccScoreboard::simulate_bead_plate`]) - returns a
-//!   column-major grid of `(bead_byte, aux_byte)` cells.
-//! - **Big road** ([`BaccScoreboard::simulate_big_road`]) - returns a
-//!   [`ROWS`]-high grid of at most [`MAX_COL_COUNT`] columns.
-//! - **Derived roads** ([`BaccScoreboard::simulate_derived_road`]) - Big Eye Boy
-//!   (index 0), Small Road (index 1), and Cockroach Pig (index 2), one grid each.
+//! - [`BaccShoe`] - wraps `shoe::Shoe` with the burn ritual and cut-card
+//!   exhaustion. Implements [`Iterator`]`<Item = bacc_core::BaccRound>` so
+//!   rounds can be consumed with a plain `for` loop.
 //!
 //! # Usage
 //!
 //! ```rust
-//! use bacc::{BaccScoreboard, BaccShoe};
+//! use bacc::BaccShoe;
+//! use bacc_core::BaccScoreboard;
 //! use shoe::{Card, Shoe, DECK};
 //!
 //! let mut cards: Vec<Card> = (0..8).flat_map(|_| DECK).collect();
@@ -52,11 +32,9 @@
 //! }
 //! ```
 
-use bacc_core::pip_value;
+use bacc_core::{BaccHand, BaccRound, pip_value};
 use kev::CardInt;
 use shoe::{Card, Shoe};
-
-pub use bacc_core::{BaccHand, BaccOutcome, BaccRound, BaccScoreboard, MAX_COL_COUNT, ROWS};
 
 /// A baccarat shoe that deals [`BaccRound`]s via the [`Iterator`] trait.
 ///

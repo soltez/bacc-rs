@@ -1,16 +1,24 @@
 # bacc-rs
 
-A fast and memory-efficient baccarat engine. Deals rounds from a
-multi-deck shoe and maintains the five standard scoreboards as
-arbitrary-precision integers.
+A shoe-dealer layer for baccarat. Wraps `shoe-rs` with baccarat
+dealing rules and exposes rounds via the `Iterator` trait. Round
+types and scoreboard tracking are provided by `bacc-core-rs`.
 
 ## Core types
 
-- `BaccaratShoe` - wraps a shuffled shoe with the burn ritual and
-  cut-card exhaustion. Implements `Iterator<Item = BaccaratRound>` so
+`bacc-rs` exports one type:
+
+- `BaccShoe` - wraps a shuffled shoe with the burn ritual and
+  cut-card exhaustion. Implements `Iterator<Item = BaccRound>` so
   rounds can be consumed with a plain `for` loop.
-- `BaccaratRound` - the resolved outcome of one round. Exposes player
-  and banker card slices and a compact binary encoding of the outcome via `encode`.
+
+The following types are from `bacc-core-rs` and used alongside `BaccShoe`:
+
+- `BaccRound` - the resolved outcome of one round. Exposes player
+  and banker card slices, a compact hex encoding of the full card
+  sequence via `encode`, and a human-readable TOML fragment via `describe`.
+  The derived outcome can be obtained via `BaccRound::outcome`, which
+  returns a `BaccOutcome` with its own `encode` encoding:
 ```
 +--------+--------+--------+--------+
 |-xxxxxxx|xxttSSss|jjjjiiii|xx33ppww|
@@ -25,15 +33,15 @@ arbitrary-precision integers.
 # (reserved) SS = three cards suited flag (00=none, 01=player, 10=banker, 11=both)
 # (reserved) tt = trips flag (00=none, 01=player, 10=banker, 11=both)
 ```
-- `BaccaratHand` - the cards dealt to one side, with hand value
+- `BaccHand` - the cards dealt to one side, with hand value
   calculation, pair detection, and third-card flag.
-- `BaccaratScoreboard` - tracks all five scoreboards as `BigUint`
-  shift-registers. Decoupled from `BaccaratShoe`; the caller drives
-  updates via `BaccaratScoreboard::update` after each round.
+- `BaccScoreboard` - tracks all five scoreboards as compact byte
+  sequences. Decoupled from `BaccShoe`; the caller drives updates
+  via `BaccScoreboard::update` after each round.
 
 ## Scoreboards
 
-All five scoreboards are stored as `BigUint` shift-registers:
+All five scoreboards are stored as compact byte sequences:
 
 - **Bead plate** - two bytes per round, newest at bits 0-15.
 ```
@@ -65,7 +73,7 @@ All five scoreboards are stored as `BigUint` shift-registers:
 ```
 
 - **Derived roads** - Big Eye Boy, Small Road, and Cockroach Pig, each
-  as a run-length-encoded shift-register.
+  as a run-length-encoded byte sequence.
 ```
 +--------+--------+--------+--------+--------+
 |rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|rrrrrrrp|
@@ -73,23 +81,28 @@ All five scoreboards are stored as `BigUint` shift-registers:
 |<-col1->|<-col2->|<-col3->|   ...  |<-coln->|
 
 # p = prediction (0 = chaos, 1 = trend)
-# rrrrrrr = row count (0~127)
+# rrrrrrr = run length (0~127)
 ```
 
 ## Usage
 
 ```rust
-use bacc::{BaccaratScoreboard, BaccaratShoe};
+use bacc::BaccShoe;
+use bacc_core::BaccScoreboard;
+use shoe::{Card, Shoe, DECK};
 
-let mut sb = BaccaratScoreboard::new();
-let shoe = BaccaratShoe::new(8, 3, 0.965); // 8 decks, 3 shuffle passes, 96.5% penetration
+let mut cards: Vec<Card> = (0..8).flat_map(|_| DECK).collect();
+cards.push(Card::Cut);
+let last = cards.len() - 1;
+cards.swap(last, 14); // place cut card at ~96.5% penetration
+
+let mut sb = BaccScoreboard::new();
+let shoe = BaccShoe::from(Shoe::from(cards.as_slice()));
 for round in shoe {
     sb.update(&round);
-    println!("{}", sb.bead_plate());
-    println!("{}", sb.big_road());
-    for road in sb.derived_roads() {
-        println!("{}", road);
-    }
+    print!("{}", round.describe());
+    println!("[scoreboard]");
+    println!("encoded = \"{}\"", sb.encode());
 }
 ```
 
