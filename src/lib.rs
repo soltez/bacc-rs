@@ -33,9 +33,38 @@
 //! }
 //! ```
 
+use arrayvec::{ArrayString, ArrayVec};
 use bacc_core::{BaccHand, BaccRound, pip_value};
-use kev::CardInt;
+use core::fmt::Write;
+use kev::{CardInt, Rank, Suit};
 use shoe::{Card, Shoe};
+
+fn rank_char(c: CardInt) -> char {
+    match c.rank() {
+        Rank::Deuce => '2',
+        Rank::Trey => '3',
+        Rank::Four => '4',
+        Rank::Five => '5',
+        Rank::Six => '6',
+        Rank::Seven => '7',
+        Rank::Eight => '8',
+        Rank::Nine => '9',
+        Rank::Ten => 'T',
+        Rank::Jack => 'J',
+        Rank::Queen => 'Q',
+        Rank::King => 'K',
+        Rank::Ace => 'A',
+    }
+}
+
+fn suit_char(c: CardInt) -> char {
+    match c.suit() {
+        Suit::Spade => 's',
+        Suit::Heart => 'h',
+        Suit::Diamond => 'd',
+        Suit::Club => 'c',
+    }
+}
 
 /// A baccarat shoe that deals [`BaccRound`]s via the [`Iterator`] trait.
 ///
@@ -46,6 +75,11 @@ pub struct BaccShoe {
     shoe: shoe::Shoe,
     // Set after the cut card is reached; the current hand plays out and then the iterator stops.
     is_exhausted: bool,
+    first_card: CardInt,
+    burn_count: u8,
+    num_decks: Option<u8>,
+    burn_cards: ArrayVec<CardInt, 10>,
+    deal_order: ArrayVec<Card, 415>,
 }
 
 impl BaccShoe {
@@ -116,17 +150,111 @@ impl BaccShoe {
     }
 }
 
+impl BaccShoe {
+    /// Returns a TOML fragment describing the shoe configuration.
+    ///
+    /// When constructed via [`From<Shoe>`], emits `first_card` and `burn_count`.
+    /// When constructed via [`From<&[Card]>`], also emits `num_decks`,
+    /// `burn_cards`, and `deal_order`.
+    #[must_use]
+    pub fn describe(&self) -> ArrayString<3072> {
+        let mut s = ArrayString::new();
+        writeln!(s, "[shoe]").expect("fits");
+        if let Some(n) = self.num_decks {
+            writeln!(s, "num_decks = {n}").expect("fits");
+        }
+        writeln!(
+            s,
+            "first_card = \"{}{}\"",
+            rank_char(self.first_card),
+            suit_char(self.first_card)
+        )
+        .expect("fits");
+        writeln!(s, "burn_count = {}", self.burn_count).expect("fits");
+        if !self.burn_cards.is_empty() {
+            write!(s, "burn_cards = [").expect("fits");
+            for (i, &c) in self.burn_cards.iter().enumerate() {
+                if i > 0 {
+                    write!(s, ", ").expect("fits");
+                }
+                write!(s, "\"{}{}\"", rank_char(c), suit_char(c)).expect("fits");
+            }
+            writeln!(s, "]").expect("fits");
+        }
+        if !self.deal_order.is_empty() {
+            writeln!(s, "deal_order = [").expect("fits");
+            for (i, &c) in self.deal_order.iter().enumerate() {
+                if i == 0 {
+                    write!(s, "  ").expect("fits");
+                } else {
+                    write!(s, ", ").expect("fits");
+                    if i % 13 == 0 {
+                        writeln!(s).expect("fits");
+                        write!(s, "  ").expect("fits");
+                    }
+                }
+                match c {
+                    Card::Play(c) => {
+                        write!(s, "\"{}{}\"", rank_char(c), suit_char(c)).expect("fits");
+                    }
+                    Card::Cut => write!(s, "\"Xx\"").expect("fits"),
+                }
+            }
+            writeln!(s).expect("fits");
+            writeln!(s, "]").expect("fits");
+        }
+        s
+    }
+}
+
 impl From<Shoe> for BaccShoe {
     fn from(mut shoe: Shoe) -> Self {
         let first_card = match shoe.deal().expect("shoe is non-empty") {
             Card::Play(c) => c,
             Card::Cut => unreachable!("cut card dealt as first card"),
         };
-        shoe.burn(pip_value(first_card) as usize);
+        let burn_count = pip_value(first_card);
+        shoe.burn(burn_count as usize);
         Self {
             shoe,
             is_exhausted: false,
+            first_card,
+            burn_count,
+            num_decks: None,
+            burn_cards: ArrayVec::new(),
+            deal_order: ArrayVec::new(),
         }
+    }
+}
+
+impl From<&[Card]> for BaccShoe {
+    fn from(cards: &[Card]) -> Self {
+        let last = cards.len() - 1;
+        let first_card = match cards[last] {
+            Card::Play(c) => c,
+            Card::Cut => unreachable!("cut card dealt as first card"),
+        };
+        let num_decks =
+            u8::try_from(cards.iter().filter(|c| matches!(c, Card::Play(_))).count() / 52)
+                .expect("deck count fits u8");
+        let burn_count = pip_value(first_card);
+        let mut burn_cards: ArrayVec<CardInt, 10> = ArrayVec::new();
+        for card in cards[..last].iter().rev().take(burn_count as usize) {
+            if let Card::Play(c) = card {
+                burn_cards.push(*c);
+            }
+        }
+        let seq_end = last.saturating_sub(burn_count as usize + 1);
+        let mut deal_order: ArrayVec<Card, 415> = ArrayVec::new();
+        for &card in cards[..=seq_end].iter().rev() {
+            deal_order.push(card);
+        }
+        let shoe = Shoe::from(cards);
+        let mut s = Self::from(shoe);
+        s.num_decks = Some(num_decks);
+        s.burn_cards = burn_cards;
+        s.deal_order = deal_order;
+        s
     }
 }
 
@@ -199,9 +327,67 @@ mod baccarat_shoe_tests {
     use super::BaccShoe;
     use kev::CardInt;
     use rstest::rstest;
-    use shoe::{Card, Shoe};
+    use shoe::{Card, DECK, Shoe};
     use std::vec;
     use std::vec::Vec;
+
+    // -- describe tests -------------------------------------------------------
+
+    #[test]
+    fn describe_ten_card_deck_ace_first_50pct() {
+        // 10 play cards, As first (burn=1), Cut at index 5 (stub=5) -> 50% penetration.
+        // deal_order = [9s, 8s, 7s] (3 cards, no chunking).
+        let cards = vec![
+            Card::Play(CardInt::Card2s), // index 0 - stub
+            Card::Play(CardInt::Card3s), // index 1 - stub
+            Card::Play(CardInt::Card4s), // index 2 - stub
+            Card::Play(CardInt::Card5s), // index 3 - stub
+            Card::Play(CardInt::Card6s), // index 4 - stub
+            Card::Cut,                   // index 5
+            Card::Play(CardInt::Card7s), // index 6 - deal_order[2]
+            Card::Play(CardInt::Card8s), // index 7 - deal_order[1]
+            Card::Play(CardInt::Card9s), // index 8 - deal_order[0]
+            Card::Play(CardInt::CardTs), // index 9 - burn card
+            Card::Play(CardInt::CardAs), // index 10 - first card (pip=1, burns 1)
+        ];
+        let shoe = BaccShoe::from(cards.as_slice());
+        let d = shoe.describe();
+        let d = d.as_str();
+
+        assert!(d.contains("num_decks = 0"));
+        assert!(d.contains("first_card = \"As\""));
+        assert!(d.contains("burn_count = 1"));
+        assert!(d.contains("burn_cards = [\"Ts\"]"));
+        // deal_order: 3 play cards, cut marker, then 5 stub cards
+        assert!(
+            d.contains("\"9s\", \"8s\", \"7s\", \"Xx\", \"6s\", \"5s\", \"4s\", \"3s\", \"2s\"")
+        );
+    }
+
+    #[test]
+    fn describe_full_deck_king_first() {
+        // 52 play cards (DECK), Kh first (burn=10), Cut at Kh's original index 14 (stub=14).
+        let mut cards: Vec<Card> = DECK.to_vec();
+        cards.push(Card::Cut);
+        let cut_idx = cards.len() - 1;
+        let kh_idx = cards
+            .iter()
+            .position(|c| *c == Card::Play(CardInt::CardKh))
+            .unwrap();
+        cards.swap(kh_idx, cut_idx);
+        let shoe = BaccShoe::from(cards.as_slice());
+        let d = shoe.describe();
+        let d = d.as_str();
+
+        assert!(d.contains("num_decks = 1"));
+        assert!(d.contains("first_card = \"Kh\""));
+        assert!(d.contains("burn_count = 10"));
+        // burn_cards: 10 entries -> 20 quote chars on that line
+        let burn_line = d.lines().find(|l| l.starts_with("burn_cards")).unwrap();
+        assert_eq!(burn_line.matches('"').count(), 20);
+        // deal_order: 28 play + 1 cut + 13 stub = 42 items -> 4 indented lines (13 + 13 + 13 + 3)
+        assert_eq!(d.lines().filter(|l| l.starts_with("  ")).count(), 4);
+    }
 
     fn hand(cards: &[CardInt]) -> super::BaccHand {
         let mut h = super::BaccHand::default();

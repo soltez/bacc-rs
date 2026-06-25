@@ -12,6 +12,7 @@ categories = ["games"]
 name = "bacc"
 
 [dependencies]
+arrayvec = { version = "0.7", default-features = false }
 bacc-core-rs = "0.2"
 kev-rs = "0.2"
 shoe-rs = "0.2"
